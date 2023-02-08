@@ -32,7 +32,8 @@ impl Command for AssignmentCommand {
 pub enum CommandParserErrorType {
     UnterminatedQuote,
     InvalidEscapedCharacter,
-    InvalidVariableName,
+    UnknownVariable,
+    InvalidVariableFormat,
     UnknownPositionVariable,
     UnknownVariableName
 }
@@ -115,7 +116,7 @@ impl<'a> Iterator for CommandParser<'a> {
                     if AssignmentCommand::is_command(&words) {
                         if !self.validate_variable(&words[0]) {
                             return Some(Err(CommandParserError::new(
-                                CommandParserErrorType::InvalidVariableName,
+                                CommandParserErrorType::UnknownVariable,
                                 statement.line_num,
                                 statement_number,
                                 self.file
@@ -133,8 +134,10 @@ impl<'a> Iterator for CommandParser<'a> {
                             CommandParserErrorType::UnterminatedQuote,
                         StatementParserErrorType::InvalidEscapedCharacter =>
                             CommandParserErrorType::InvalidEscapedCharacter,
-                        StatementParserErrorType::InvalidVariableName =>
-                            CommandParserErrorType::InvalidVariableName
+                        StatementParserErrorType::UnknownVariable =>
+                            CommandParserErrorType::UnknownVariable,
+                        StatementParserErrorType::InvalidVariableFormat =>
+                            CommandParserErrorType::InvalidVariableFormat
                     };
 
                     return Some(Err(CommandParserError::new(
