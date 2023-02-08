@@ -97,32 +97,6 @@ impl<'a> CommandParser<'a> {
 
         return true;
     }
-
-    fn expand_value(&mut self, value: &str) -> Result<String, CommandParserErrorType> {
-        let mut expanded_variable = String::new();
-        let mut variable = String::new();
-        let mut in_variable = true;
-        let mut in_backslash = true;
-
-        for c in value.chars() {
-            if in_variable {
-                if c.is_alphanumeric() {
-                    variable.push(c);
-                }
-            } else if in_backslash {
-                if ['\\', 'n', '$', '@'].contains(&c) {
-                    expanded_variable.push(c);
-                    in_backslash = false;
-                } else {
-                    return Err(CommandParserErrorType::InvalidEscapedCharacter);
-                }
-            } else if c == '$' {
-                in_variable = true;
-            }
-        }
-
-        Ok(expanded_variable)
-    }
 }
 
 impl<'a> Iterator for CommandParser<'a> {

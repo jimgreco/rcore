@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
-use std::iter::Map;
 use std::str::Chars;
 
 #[derive(Debug)]
@@ -59,11 +58,11 @@ impl Statement {
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} [{}]:", self.statement_num, self.line_num)?;
+        write!(f, "{}: ", self.line_num)?;
         for word in self.words.iter() {
             write!(f, " \"{}\"", word)?;
         }
-        Ok(())
+        write!(f, " [{}]", self.statement_num)
     }
 }
 
@@ -83,6 +82,145 @@ impl<'a> StatementParser<'a> {
             statement_num: 0
         }
     }
+
+    fn expand(&mut self, word: &String) -> Result<String, StatementParserError> {
+        let mut in_replace = false;
+        let mut in_replace_first_char = false;
+        let mut argument: usize = 0;
+        let mut variable = String::new();
+        let mut expanded = String::new();
+        let mut iterator = word.chars();
+        let mut has_curly_brackets = false;
+
+        loop {
+            match iterator.next() {
+                None => {
+                    // end of word
+                    if in_replace {
+                        if in_replace_first_char || has_curly_brackets {
+                            // $ at the end of a line or missing the closing curly bracket ${foo}
+                            return Err(StatementParserError::new(
+                                self.line_num, self.statement_num,
+                                StatementParserErrorType::InvalidVariableName));
+                        } else if variable.is_empty() {
+                            // end of argument
+                            match self.context.get_argument(argument) {
+                                None => return Err(StatementParserError::new(
+                                    self.line_num, self.statement_num,
+                                    StatementParserErrorType::InvalidVariableName)),
+                                Some(arg) => expanded.push_str(arg)
+                            }
+                        } else {
+                            // end of variable
+                            match self.context.get_value(&variable) {
+                                None => return Err(StatementParserError::new(
+                                    self.line_num, self.statement_num,
+                                    StatementParserErrorType::InvalidVariableName)),
+                                Some(arg) => expanded.push_str(arg)
+                            }
+                        }
+                    }
+
+                    // done
+                    return Ok(expanded);
+                }
+                Some(c) => {
+                    if in_replace {
+                        if in_replace_first_char {
+                            // first char decides whether we are in an argument or variable
+                            if c == '$' {
+                                if has_curly_brackets {
+                                    return Err(StatementParserError::new(
+                                        self.line_num, self.statement_num,
+                                        StatementParserErrorType::InvalidVariableName));
+                                }
+
+                                // double dollar sign is just a dollar sign character
+                                expanded.push(c);
+                                in_replace = false;
+                                in_replace_first_char = false;
+                            } else if c.is_numeric() {
+                                // arguments are all numeric
+                                argument = usize::try_from(c.to_digit(10).unwrap()).unwrap();
+                                in_replace_first_char = false;
+                            } else if c.is_alphabetic() {
+                                // variables start with an alphabetic character and then are alphanumeric
+                                variable.push(c);
+                                in_replace_first_char = false;
+                            } else if c == '{' {
+                                // skip over curly bracket, ${foo}
+                                has_curly_brackets = true;
+                            } else {
+                                return Err(StatementParserError::new(
+                                    self.line_num, self.statement_num,
+                                    StatementParserErrorType::InvalidVariableName));
+                            }
+                        } else {
+                            // second+ char
+                            let mut did_expansion = false;
+
+                            if variable.is_empty() {
+                                // in argument
+                                if c.is_numeric() {
+                                    // shift and add numbers
+                                    argument *= 10;
+                                    argument += usize::try_from(c.to_digit(10).unwrap()).unwrap();
+                                } else {
+                                    // finished reading the argument, get the value
+                                    match self.context.get_argument(argument) {
+                                        None => return Err(StatementParserError::new(
+                                            self.line_num, self.statement_num,
+                                            StatementParserErrorType::InvalidVariableName)),
+                                        Some(arg) => expanded.push_str(arg)
+                                    }
+                                    argument = 0;
+                                    did_expansion = true;
+                                }
+                            } else {
+                                // in variable
+                                if c.is_alphanumeric() {
+                                    // add to variable name
+                                    variable.push(c);
+                                } else {
+                                    // finished reading the variable, get the value out
+                                    match self.context.get_value(&variable) {
+                                        None => return Err(StatementParserError::new(
+                                            self.line_num, self.statement_num,
+                                            StatementParserErrorType::InvalidVariableName)),
+                                        Some(arg) => expanded.push_str(arg)
+                                    }
+                                    variable.clear();
+                                    did_expansion = true;
+                                }
+                            }
+
+                            if did_expansion {
+                                if has_curly_brackets {
+                                    if c != '}' {
+                                        return Err(StatementParserError::new(
+                                            self.line_num, self.statement_num,
+                                            StatementParserErrorType::InvalidVariableName));
+                                    }
+                                    has_curly_brackets = false;
+                                } else if c == '$' {
+                                    in_replace_first_char = true;
+                                } else {
+                                    in_replace = false;
+                                    expanded.push(c);
+                                }
+                            }
+                        }
+                    } else if c == '$' {
+                        in_replace = true;
+                        in_replace_first_char = true;
+                    } else {
+                        // regular character
+                        expanded.push(c);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for StatementParser<'a> {
@@ -100,224 +238,140 @@ impl<'a> Iterator for StatementParser<'a> {
         self.statement_num += 1;
 
         loop {
-            let opt = self.commands.next();
-            if opt == None {
-                // end of file
-                if in_quotes {
-                    return Some(Err(StatementParserError::new(
-                        self.line_num, self.statement_num, StatementParserErrorType::UnterminatedQuote)));
-                }
-
-                // add the last word
-                if word.len() > 0 {
-                    let mut in_replace = false;
-                    let mut in_replace_first = false;
-                    let mut argument: usize = 0;
-                    let mut variable = String::new();
-                    let mut expanded = String::new();
-
-                    for wc in word.chars() {
-                        if in_replace {
-                            if in_replace_first {
-                                // decides whether we are in an argument or variable
-                                if wc == '$' {
-                                    // double dollar sign is just a dollar sign character
-                                    expanded.push(wc);
-                                } else if wc.is_numeric() {
-                                    // arguments are all numeric
-                                    argument += wc.to_digit(10).unwrap();
-                                } else if wc.is_alphabetic() {
-                                    // variables start with an alphabetic character and then are alphanumeric
-                                    variable.push(wc);
-                                } else {
-                                    return Some(Err(StatementParserError::new(
-                                        self.line_num, self.statement_num,
-                                        StatementParserErrorType::InvalidVariableName)));
-                                }
-                                in_replace_first = false;
-                            } else {
-                                if variable.len() == 0 {
-                                    // in argument
-                                    if wc.is_numeric() {
-                                        argument *= 10;
-                                        argument += wc.to_digit(10).unwrap();
-                                    } else {
-                                        match self.context.get_argument(argument) {
-                                            None => {
-                                                return Some(Err(StatementParserError::new(
-                                                    self.line_num, self.statement_num,
-                                                    StatementParserErrorType::InvalidVariableName)));
-                                            }
-                                            Some(arg) => {
-                                                expanded.push_str(arg);
-                                            }
-                                        }
-
-                                        in_replace = false;
-                                        argument = 0;
-                                    }
-                                } else {
-                                    // in variable
-                                    if wc.is_alphanumeric() {
-                                        variable.push(wc);
-                                    } else {
-                                        match self.context.get_value(&variable) {
-                                            None => {
-                                                return Some(Err(StatementParserError::new(
-                                                    self.line_num, self.statement_num,
-                                                    StatementParserErrorType::InvalidVariableName)));
-                                            }
-                                            Some(arg) => {
-                                                expanded.push_str(arg);
-                                            }
-                                        }
-
-                                        in_replace = false;
-                                        variable.clear();
-                                    }
-                                }
-
-                                if variable.len() != 0 && wc.is_numeric()
-                                        || !is_argument && wc.is_alphanumeric() {
-                                    variable.push(wc);
-                                } else {
-                                    if is_argument {
-
-                                    }
-
-                                    variable.clear();
-                                    is_argument = false;
-                                    in_replace = false;
-                                }
-                            }
-
-
-                            if wc.is_alphanumeric() {
-                                variable.push(wc);
-                            } else {
-                                // done with variable
-                                if variable.len() == 0 {
-
-                                } else {
-                                    let first_char = variable.chars().next().unwrap();
-                                    if first_char.is_numeric() {
-
-                                    }
-                                }
-                                in_replace = false;
-                            }
-                        } else if wc == '$' {
-                            in_replace = true;
-                            in_replace_first = true;
-                        } else {
-                            variable.push(wc);
-                        }
-                    }
-
-                    words.push(word.clone());
-                    word.clear();
-                }
-                break;
-            } else {
-                let c = opt.unwrap();
-                statement.push(c);
-
-                if c == '\n' {
-                    // end of line
+            match self.commands.next() {
+                None => {
+                    // end of file
                     if in_quotes {
                         return Some(Err(StatementParserError::new(
                             self.line_num, self.statement_num, StatementParserErrorType::UnterminatedQuote)));
                     }
 
                     // add the last word
-                    if word.len() > 0 {
-                        words.push(word.clone());
+                    if !word.is_empty() {
+                        match self.expand(&mut word) {
+                            Ok(expanded) => words.push(expanded),
+                            Err(err) => return Some(Err(err))
+                        }
                         word.clear();
                     }
 
-                    lines += 1;
-
-                    // continue to the next line if the last character is a backslash
-                    if !in_backslash && words.len() > 0 {
-                        break;
-                    }
-
-                    in_quotes = false;
-                    in_comment = false;
-                    in_backslash = false;
-                } else if !in_comment {
-                    if in_backslash {
-                        if !in_quotes {
-                            return Some(Err(StatementParserError::new(
-                                self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
-                        }
-
-                        // special characters that are escaped
-                        if c == 'n' {
-                            word.push('\n');
-                        } else if c == 't' {
-                            word.push('\t');
-                        } else {
-                            return Some(Err(StatementParserError::new(
-                                self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
-                        }
-
-                        in_backslash = false;
-                    } else if c == '\\' {
-                        // escape the next character or continue to the next line
-                        in_backslash = true;
-                    } else if c == '"' {
-                        if in_quotes {
-                            // end quotes
-                            // include zero length words
-                            words.push(word.clone());
-                            word.clear();
-
-                            in_quotes = false;
-                        } else {
-                            // start quotes
-                            in_quotes = true;
-                        }
-                    } else if c == '#' {
-                        // start of comment
-                        if word.len() > 0 {
-                            words.push(word.clone());
-                            word.clear();
-                        }
-
-                        in_comment = true;
-                    } else if c.is_whitespace() {
-                        if in_quotes {
-                            // include all whitespace in quotes
-                            word.push(c);
-                        } else if word.len() > 0 {
-                            // end the current word
-                            words.push(word.clone());
-                            word.clear();
-                        }
-                        // otherwise, ignore whitespace
+                    if words.len() > 0 {
+                        let statement = Statement::new(
+                            self.line_num, self.statement_num, words, statement);
+                        self.line_num += lines;
+                        return Some(Ok(statement));
                     } else {
-                        // add to the current word
-                        word.push(c);
+                        return None;
+                    }
+                }
+                Some(c) => {
+                    statement.push(c);
+
+                    if c == '\n' {
+                        // end of line
+                        if in_quotes {
+                            return Some(Err(StatementParserError::new(
+                                self.line_num, self.statement_num, StatementParserErrorType::UnterminatedQuote)));
+                        }
+
+                        // add the last word
+                        if !word.is_empty() {
+                            match self.expand(&word) {
+                                Ok(expanded) => words.push(expanded),
+                                Err(err) => return Some(Err(err))
+                            }
+                            word.clear();
+                        }
+                        lines += 1;
+
+                        // continue to the next line if the last character is a backslash
+                        if !in_backslash && words.len() > 0 {
+                            let statement = Statement::new(
+                                self.line_num, self.statement_num, words, statement);
+                            self.line_num += lines;
+                            return Some(Ok(statement));
+                        }
+
+                        in_quotes = false;
+                        in_comment = false;
+                        in_backslash = false;
+                    } else if !in_comment {
+                        if in_backslash {
+                            if !in_quotes {
+                                return Some(Err(StatementParserError::new(
+                                    self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
+                            }
+
+                            // special characters that are escaped
+                            if c == 'n' {
+                                word.push('\n');
+                            } else if c == '\\' {
+                                word.push('\\');
+                            } else if c == '"' {
+                                word.push('"');
+                            } else {
+                                return Some(Err(StatementParserError::new(
+                                    self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
+                            }
+
+                            in_backslash = false;
+                        } else if c == '\\' {
+                            // escape the next character or continue to the next line
+                            in_backslash = true;
+                        } else if c == '"' {
+                            if in_quotes {
+                                // end quotes
+                                // include zero length words
+                                match self.expand(&word) {
+                                    Ok(expanded) => words.push(expanded),
+                                    Err(err) => return Some(Err(err))
+                                }
+                                word.clear();
+                            }
+                            in_quotes = !in_quotes
+                        } else if c == '#' && !in_quotes {
+                            // start of comment
+                            // add the last word
+                            if !word.is_empty() {
+                                match self.expand(&word) {
+                                    Ok(expanded) => words.push(expanded),
+                                    Err(err) => return Some(Err(err))
+                                }
+                                word.clear();
+                            }
+
+                            in_comment = true;
+                        } else if c.is_whitespace() {
+                            if in_quotes {
+                                // include all whitespace in quotes
+                                word.push(c);
+                            } else if !word.is_empty() {
+                                // end the current word
+                                match self.expand(&word) {
+                                    Ok(expanded) => words.push(expanded),
+                                    Err(err) => return Some(Err(err))
+                                }
+                                word.clear();
+                            }
+                            // otherwise, ignore whitespace
+                        } else {
+                            // add to the current word
+                            word.push(c);
+                        }
                     }
                 }
             }
+
         }
 
-        if words.len() > 0 {
-            let statement = Statement::new(
-                self.line_num, self.statement_num, words, statement);
-            self.line_num += lines;
-            return Some(Ok(statement));
-        } else {
-            return None;
-        }
+        None
     }
 }
 
 pub trait CommandContext {
     fn get_argument(&self, position: usize) -> Option<&String>;
     fn get_value(&self, key: &str) -> Option<&String>;
+    fn add_argument(&mut self, value: &str);
     fn set_value(&mut self, key: &str, value: &str, force: bool);
 }
 
@@ -344,6 +398,10 @@ impl CommandContext for SimpleContext {
         self.variables.get(key)
     }
 
+    fn add_argument(&mut self, value: &str) {
+        self.arguments.push(value.to_string());
+    }
+
     fn set_value(&mut self, key: &str, value: &str, force: bool) {
         if force || !self.variables.contains_key(key) {
             self.variables.insert(key.to_string(), value.to_string());
@@ -353,19 +411,24 @@ impl CommandContext for SimpleContext {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::command::statement_parser::{StatementParser, StatementParserError, StatementParserErrorType, CommandContext, SimpleContext};
+    use crate::core::command::CommandContext;
+    use crate::core::command::statement_parser::{StatementParser, StatementParserError, StatementParserErrorType, SimpleContext};
 
     #[test]
     fn print_debug() {
-        let statement = "create foo/bar me
+        let statement = "create $wtf/bar me
         five = 123
         a \"multiple word\" statement
-        a multiple line \\
+        a $1 multiple line \\
         statement
         another";
+        let mut context = SimpleContext::new();
+        context.add_argument("testing123");
+        context.add_argument("testing456");
+        context.set_value("wtf", "foo", true);
 
-        let context = SimpleContext::new();
         let result = StatementParser::new(statement, &context);
+
         for x in result {
             println!("{}", x.unwrap());
         }
@@ -403,53 +466,56 @@ mod tests {
     }
 
     #[test]
+    fn invalid_escaped_character_throws_error() {
+        let statement = "foo \"b\\^br\" me";
+
+        let result = StatementParser::new(statement, &SimpleContext::new()).next().unwrap();
+
+        assert_eq!(result, Err(StatementParserError::new(1, 1, StatementParserErrorType::InvalidEscapedCharacter)));
+    }
+
+    #[test]
+    fn escaped_characters() {
+        let statement = "foo \"bar \\n me \\\" now \\\\ abc \"";
+
+        let statements = StatementParser::new(statement, &SimpleContext::new()).next().unwrap();
+
+        assert_eq!(statements.unwrap().words[1], "bar \n me \" now \\ abc ");
+    }
+
+    #[test]
     fn single_statement_is_processed() {
-        let statement = "context $1";
+        let statement = "foo bar";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0], "context_/_$1");
+        assert_eq!(statements[0], "foo_/_bar");
     }
 
     #[test]
     fn multiple_statements_are_processed() {
-        let statement = "context $1
-        create $1 com.core.platform.applications.sequencer.Sequencer @$3 SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3";
+        let statement = "Jojo was a man who thought he was a loner
+        But he \"knew it couldn't\" last
+        \"Jojo left his home\" in \"Tuscon, Arizona\"";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 3);
-        assert_eq!(statements[0], "context_/_$1");
-        assert_eq!(statements[1], "create_/_$1_/_com.core.platform.applications.sequencer.Sequencer_/_@$3_/_SEQ01");
-        assert_eq!(statements[2], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3");
+        assert_eq!(statements[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
+        assert_eq!(statements[1], "But_/_he_/_knew it couldn't_/_last");
+        assert_eq!(statements[2], "Jojo left his home_/_in_/_Tuscon, Arizona");
     }
 
     #[test]
-    fn empty_statement_is_ignored() {
-        let statement = "context $1
+    fn empty_statements_are_ignored() {
+        let statement = "Jojo was a man who thought he was a loner
 
-        create $1 com.core.platform.applications.sequencer.Sequencer @$3 SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3";
+        But he \"knew it couldn't\" last
 
-        let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
-            |r| r.unwrap().words.join("_/_")).collect();
-
-        assert_eq!(statements.len(), 3);
-        assert_eq!(statements[0], "context_/_$1");
-        assert_eq!(statements[1], "create_/_$1_/_com.core.platform.applications.sequencer.Sequencer_/_@$3_/_SEQ01");
-        assert_eq!(statements[2], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3");
-    }
-
-    #[test]
-    fn empty_statement_at_end_is_ignored() {
-        let statement = "context $1
-
-        create $1 com.core.platform.applications.sequencer.Sequencer @$3 SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3
+        \"Jojo left his home\" in \"Tuscon, Arizona\"
 
         ";
 
@@ -457,68 +523,49 @@ mod tests {
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 3);
-        assert_eq!(statements[0], "context_/_$1");
-        assert_eq!(statements[1], "create_/_$1_/_com.core.platform.applications.sequencer.Sequencer_/_@$3_/_SEQ01");
-        assert_eq!(statements[2], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3");
+        assert_eq!(statements[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
+        assert_eq!(statements[1], "But_/_he_/_knew it couldn't_/_last");
+        assert_eq!(statements[2], "Jojo left his home_/_in_/_Tuscon, Arizona");
     }
 
     #[test]
     fn whitespace_is_ignored() {
-        let statement = "   context     $1  ";
+        let statement = "   foo     bar  ";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0], "context_/_$1");
+        assert_eq!(statements[0], "foo_/_bar");
     }
 
     #[test]
     fn backslash_will_continue_statement_on_the_next_line() {
-        let statement = "   context     $1  \
-        create $1 com.core.platform.applications.sequencer.Sequencer     @$3     SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3
-        ";
+        let statement = "Jojo was a man who thought he was a loner \
+        But he \"knew it couldn't\" last
+        \"Jojo left his home\" in \"Tuscon, Arizona\"";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 2);
-        assert_eq!(statements[0], "context_/_$1_/_create_/_$1_/_com.core.platform.applications.sequencer.Sequencer_/_@$3_/_SEQ01");
-        assert_eq!(statements[1], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3")
-    }
-
-    #[test]
-    fn quotes_will_mark_a_string() {
-        let statement = "soo    \"foo bar me\"   do";
-
-        let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
-            |r| r.unwrap().words.join("_/_")).collect();
-
-        assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0], "soo_/_foo bar me_/_do");
+        assert_eq!(statements[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner_/_But_/_he_/_knew it couldn't_/_last");
+        assert_eq!(statements[1], "Jojo left his home_/_in_/_Tuscon, Arizona");
     }
 
     #[test]
     fn empty_quotes_can_be_a_word() {
         let statement = "foo \"\" bar";
+        let context = SimpleContext::new();
+        let parser = StatementParser::new(statement, &context);
 
-        let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
-            |r| r.unwrap().words.join("_/_")).collect();
+        let statements: Vec<Vec<String>> = parser.map(|r| r.unwrap().words).collect();
 
-        assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0], "foo_/__/_bar");
-    }
-
-    #[test]
-    fn backslash_can_represent_special_characters() {
-        let statement = "\"backslash\\\\\" \"newline\\n\" \"pound\\#\" \"dollarsign\\$\" \"quotes\\\"\"";
-
-        let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
-            |r| r.unwrap().words.join("_/_")).collect();
-
-        assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0], "backslash\\\\_/_newline\\n_/_pound\\#_/_dollarsign\\$_/_quotes\\\"");
+        let statement = &statements[0];
+        assert_eq!(statement.len(), 3);
+        assert_eq!(statement[0], "foo");
+        assert_eq!(statement[1], "");
+        assert_eq!(statement[2], "bar");
     }
 
     #[test]
@@ -532,29 +579,30 @@ mod tests {
 
     #[test]
     fn comment_at_start_of_line_removes_statement() {
-        let statement = "context $1
-        #create $1 com.core.platform.applications.sequencer.Sequencer @$3 SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3";
+        let statement = "Jojo was a man who thought he was a loner
+        #But he \"knew it couldn't\" last
+        \"Jojo left his home\" in \"Tuscon, Arizona\"";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
         assert_eq!(statements.len(), 2);
-        assert_eq!(statements[0], "context_/_$1");
-        assert_eq!(statements[1], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3");
+        assert_eq!(statements[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
+        assert_eq!(statements[1], "Jojo left his home_/_in_/_Tuscon, Arizona");
     }
 
     #[test]
-    fn command_at_end_of_line_removes_remaining_content() {
-        let statement = "context # $1
-        #create $1 com.core.platform.applications.sequencer.Sequencer @$3 SEQ01
-        create $1/handlers/misc com.core.crypto.sequencer.MiscellaneousCommandHandler @$3";
+    fn comment_at_end_of_line_removes_remaining_content() {
+        let statement = "Jojo was a man # who thought he was a loner
+        But he \"knew it couldn't\" last
+        \"Jojo left his home\" in \"Tuscon, Arizona\"";
 
         let statements: Vec<String> = StatementParser::new(statement, &SimpleContext::new()).map(
             |r| r.unwrap().words.join("_/_")).collect();
 
-        assert_eq!(statements.len(), 2);
-        assert_eq!(statements[0], "context");
-        assert_eq!(statements[1], "create_/_$1/handlers/misc_/_com.core.crypto.sequencer.MiscellaneousCommandHandler_/_@$3");
+        assert_eq!(statements.len(), 3);
+        assert_eq!(statements[0], "Jojo_/_was_/_a_/_man");
+        assert_eq!(statements[1], "But_/_he_/_knew it couldn't_/_last");
+        assert_eq!(statements[2], "Jojo left his home_/_in_/_Tuscon, Arizona");
     }
 }
