@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Formatter;
 use std::iter::Map;
 use std::str::Chars;
 
@@ -7,21 +9,26 @@ use std::str::Chars;
 pub(crate) enum StatementParserErrorType {
     UnterminatedQuote,
     InvalidEscapedCharacter,
+    InvalidVariableName
 }
 
 #[derive(Debug)]
 #[derive(PartialEq)]
 pub(crate) struct StatementParserError {
-    pub(crate) line_number: i32,
-    pub(crate) error_type: StatementParserErrorType
+    pub(crate) line_num: i32,
+    pub(crate) statement_num: i32,
+    pub(crate) error: StatementParserErrorType
 }
 
 impl StatementParserError {
-    pub(crate) fn new(line_number: i32, error_type: StatementParserErrorType)
-            -> StatementParserError {
+    pub(crate) fn new(
+            line_num: i32,
+            statement_num: i32,
+            error: StatementParserErrorType) -> StatementParserError {
         StatementParserError {
-            line_number,
-            error_type
+            line_num,
+            statement_num,
+            error
         }
     }
 }
@@ -29,31 +36,51 @@ impl StatementParserError {
 #[derive(Debug)]
 #[derive(PartialEq)]
 pub(crate) struct Statement {
-    pub(crate) line_number: i32,
-    pub(crate) words: Vec<String>
+    pub(crate) line_num: i32,
+    pub(crate) statement_num: i32,
+    pub(crate) words: Vec<String>,
+    pub(crate) statement: String
 }
 
 impl Statement {
-    pub(crate) fn new(line_number: i32, words: Vec<String>) -> Statement {
+    pub(crate) fn new(
+            line_num: i32,
+            statement_num: i32,
+            words: Vec<String>,
+            statement: String) -> Statement {
         Statement {
-            line_number,
-            words
+            line_num,
+            statement_num,
+            words,
+            statement
         }
     }
 }
 
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} [{}]:", self.statement_num, self.line_num)?;
+        for word in self.words.iter() {
+            write!(f, " \"{}\"", word)?;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct StatementParser<'a> {
-    commands: &'a mut Chars<'a>,
+    commands: Chars<'a>,
     context: &'a dyn CommandContext,
-    line_number: i32
+    line_num: i32,
+    statement_num: i32
 }
 
 impl<'a> StatementParser<'a> {
     pub(crate) fn new(commands: &'a str, context: &'a dyn CommandContext) -> StatementParser<'a> {
         StatementParser {
-            commands: &mut commands.chars(),
+            commands: commands.chars(),
             context,
-            line_number: 1
+            line_num: 1,
+            statement_num: 0
         }
     }
 }
@@ -67,6 +94,10 @@ impl<'a> Iterator for StatementParser<'a> {
         let mut in_backslash = false;
         let mut word = String::new();
         let mut words: Vec<String> = Vec::new();
+        let mut lines = 0;
+        let mut statement = String::new();
+
+        self.statement_num += 1;
 
         loop {
             let opt = self.commands.next();
@@ -74,23 +105,128 @@ impl<'a> Iterator for StatementParser<'a> {
                 // end of file
                 if in_quotes {
                     return Some(Err(StatementParserError::new(
-                        self.line_number, StatementParserErrorType::UnterminatedQuote)));
+                        self.line_num, self.statement_num, StatementParserErrorType::UnterminatedQuote)));
                 }
 
                 // add the last word
                 if word.len() > 0 {
+                    let mut in_replace = false;
+                    let mut in_replace_first = false;
+                    let mut argument: usize = 0;
+                    let mut variable = String::new();
+                    let mut expanded = String::new();
+
+                    for wc in word.chars() {
+                        if in_replace {
+                            if in_replace_first {
+                                // decides whether we are in an argument or variable
+                                if wc == '$' {
+                                    // double dollar sign is just a dollar sign character
+                                    expanded.push(wc);
+                                } else if wc.is_numeric() {
+                                    // arguments are all numeric
+                                    argument += wc.to_digit(10).unwrap();
+                                } else if wc.is_alphabetic() {
+                                    // variables start with an alphabetic character and then are alphanumeric
+                                    variable.push(wc);
+                                } else {
+                                    return Some(Err(StatementParserError::new(
+                                        self.line_num, self.statement_num,
+                                        StatementParserErrorType::InvalidVariableName)));
+                                }
+                                in_replace_first = false;
+                            } else {
+                                if variable.len() == 0 {
+                                    // in argument
+                                    if wc.is_numeric() {
+                                        argument *= 10;
+                                        argument += wc.to_digit(10).unwrap();
+                                    } else {
+                                        match self.context.get_argument(argument) {
+                                            None => {
+                                                return Some(Err(StatementParserError::new(
+                                                    self.line_num, self.statement_num,
+                                                    StatementParserErrorType::InvalidVariableName)));
+                                            }
+                                            Some(arg) => {
+                                                expanded.push_str(arg);
+                                            }
+                                        }
+
+                                        in_replace = false;
+                                        argument = 0;
+                                    }
+                                } else {
+                                    // in variable
+                                    if wc.is_alphanumeric() {
+                                        variable.push(wc);
+                                    } else {
+                                        match self.context.get_value(&variable) {
+                                            None => {
+                                                return Some(Err(StatementParserError::new(
+                                                    self.line_num, self.statement_num,
+                                                    StatementParserErrorType::InvalidVariableName)));
+                                            }
+                                            Some(arg) => {
+                                                expanded.push_str(arg);
+                                            }
+                                        }
+
+                                        in_replace = false;
+                                        variable.clear();
+                                    }
+                                }
+
+                                if variable.len() != 0 && wc.is_numeric()
+                                        || !is_argument && wc.is_alphanumeric() {
+                                    variable.push(wc);
+                                } else {
+                                    if is_argument {
+
+                                    }
+
+                                    variable.clear();
+                                    is_argument = false;
+                                    in_replace = false;
+                                }
+                            }
+
+
+                            if wc.is_alphanumeric() {
+                                variable.push(wc);
+                            } else {
+                                // done with variable
+                                if variable.len() == 0 {
+
+                                } else {
+                                    let first_char = variable.chars().next().unwrap();
+                                    if first_char.is_numeric() {
+
+                                    }
+                                }
+                                in_replace = false;
+                            }
+                        } else if wc == '$' {
+                            in_replace = true;
+                            in_replace_first = true;
+                        } else {
+                            variable.push(wc);
+                        }
+                    }
+
                     words.push(word.clone());
                     word.clear();
                 }
                 break;
             } else {
                 let c = opt.unwrap();
+                statement.push(c);
 
                 if c == '\n' {
                     // end of line
                     if in_quotes {
                         return Some(Err(StatementParserError::new(
-                            self.line_number, StatementParserErrorType::UnterminatedQuote)));
+                            self.line_num, self.statement_num, StatementParserErrorType::UnterminatedQuote)));
                     }
 
                     // add the last word
@@ -99,12 +235,13 @@ impl<'a> Iterator for StatementParser<'a> {
                         word.clear();
                     }
 
+                    lines += 1;
+
                     // continue to the next line if the last character is a backslash
                     if !in_backslash && words.len() > 0 {
                         break;
                     }
 
-                    self.line_number += 1;
                     in_quotes = false;
                     in_comment = false;
                     in_backslash = false;
@@ -112,12 +249,18 @@ impl<'a> Iterator for StatementParser<'a> {
                     if in_backslash {
                         if !in_quotes {
                             return Some(Err(StatementParserError::new(
-                                self.line_number, StatementParserErrorType::InvalidEscapedCharacter)));
+                                self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
                         }
 
                         // special characters that are escaped
-                        word.push('\\');
-                        word.push(c);
+                        if c == 'n' {
+                            word.push('\n');
+                        } else if c == 't' {
+                            word.push('\t');
+                        } else {
+                            return Some(Err(StatementParserError::new(
+                                self.line_num, self.statement_num, StatementParserErrorType::InvalidEscapedCharacter)));
+                        }
 
                         in_backslash = false;
                     } else if c == '\\' {
@@ -162,7 +305,10 @@ impl<'a> Iterator for StatementParser<'a> {
         }
 
         if words.len() > 0 {
-            return Some(Ok(Statement::new(self.line_number, words)));
+            let statement = Statement::new(
+                self.line_num, self.statement_num, words, statement);
+            self.line_num += lines;
+            return Some(Ok(statement));
         } else {
             return None;
         }
@@ -210,6 +356,22 @@ mod tests {
     use crate::core::command::statement_parser::{StatementParser, StatementParserError, StatementParserErrorType, CommandContext, SimpleContext};
 
     #[test]
+    fn print_debug() {
+        let statement = "create foo/bar me
+        five = 123
+        a \"multiple word\" statement
+        a multiple line \\
+        statement
+        another";
+
+        let context = SimpleContext::new();
+        let result = StatementParser::new(statement, &context);
+        for x in result {
+            println!("{}", x.unwrap());
+        }
+    }
+
+    #[test]
     fn no_statements_returns_none() {
         let statement = "
 
@@ -227,7 +389,7 @@ mod tests {
 
         let result = StatementParser::new(statement, &SimpleContext::new()).next().unwrap();
 
-        assert_eq!(result, Err(StatementParserError::new(1, StatementParserErrorType::UnterminatedQuote)));
+        assert_eq!(result, Err(StatementParserError::new(1, 1, StatementParserErrorType::UnterminatedQuote)));
     }
 
     #[test]
@@ -237,7 +399,7 @@ mod tests {
 
         let result = StatementParser::new(statement, &SimpleContext::new()).next().unwrap();
 
-        assert_eq!(result, Err(StatementParserError::new(1, StatementParserErrorType::UnterminatedQuote)));
+        assert_eq!(result, Err(StatementParserError::new(1, 1, StatementParserErrorType::UnterminatedQuote)));
     }
 
     #[test]
@@ -365,7 +527,7 @@ mod tests {
 
         let result = StatementParser::new(statement, &SimpleContext::new()).next().unwrap();
 
-        assert_eq!(result, Err(StatementParserError::new(1, StatementParserErrorType::InvalidEscapedCharacter)));
+        assert_eq!(result, Err(StatementParserError::new(1, 1, StatementParserErrorType::InvalidEscapedCharacter)));
     }
 
     #[test]

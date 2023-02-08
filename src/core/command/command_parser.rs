@@ -1,35 +1,29 @@
 use crate::core::command::CommandContext;
 use crate::core::command::statement_parser::{SimpleContext, StatementParser, StatementParserErrorType};
 
-trait Command {
+pub trait Command {
     fn execute(&self, context: &mut dyn CommandContext);
 }
 
-pub struct AssignmentCommand<'a> {
-    variable: &'a str,
-    value: &'a str,
-    force: bool,
-    words: &'a Vec<String>
+pub struct AssignmentCommand {
+    words: Vec<String>
 }
 
-impl<'a> AssignmentCommand<'a> {
+impl AssignmentCommand {
     fn is_command(words: &Vec<String>) -> bool {
         return words.len() == 3 && (words[1] == "=" || words[1] == ":=");
     }
 
-    pub fn new(words: &Vec<String>) -> AssignmentCommand<'a> {
+    pub fn new(words: Vec<String>) -> AssignmentCommand {
         AssignmentCommand {
-            variable: &words[0],
-            value: &words[2],
-            force: &words[1] == "=",
             words
         }
     }
 }
 
-impl<'a> Command for AssignmentCommand<'a> {
+impl Command for AssignmentCommand {
     fn execute(&self, context: &mut dyn CommandContext) {
-        context.set_value(self.variable, self.value, self.force);
+        context.set_value(&self.words[0], &self.words[2], self.words[1] == "=");
     }
 }
 
@@ -135,7 +129,8 @@ impl<'a> Iterator for CommandParser<'a> {
     type Item = Result<Box<dyn Command>, CommandParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let statement_parser = StatementParser::new(self.file, &SimpleContext::new());
+        let context = SimpleContext::new();
+        let statement_parser = StatementParser::new(self.file, &context);
         let mut statement_number = 1;
 
         for statement_result in statement_parser {
@@ -147,28 +142,30 @@ impl<'a> Iterator for CommandParser<'a> {
                         if !self.validate_variable(&words[0]) {
                             return Some(Err(CommandParserError::new(
                                 CommandParserErrorType::InvalidVariableName,
-                                statement.line_number,
+                                statement.line_num,
                                 statement_number,
                                 self.file
                             )));
                         }
 
-                        return Some(Ok(Box::new(AssignmentCommand::new(&words))));
+                        return Some(Ok(Box::new(AssignmentCommand::new(words))));
                     }
 
                     statement_number += 1;
                 }
                 Err(statement_error) => {
-                    let command_error_type = match statement_error.error_type {
+                    let command_error_type = match statement_error.error {
                         StatementParserErrorType::UnterminatedQuote =>
                             CommandParserErrorType::UnterminatedQuote,
                         StatementParserErrorType::InvalidEscapedCharacter =>
-                            CommandParserErrorType:: InvalidEscapedCharacter
+                            CommandParserErrorType::InvalidEscapedCharacter,
+                        StatementParserErrorType::InvalidVariableName =>
+                            CommandParserErrorType::InvalidVariableName
                     };
 
                     return Some(Err(CommandParserError::new(
                         command_error_type,
-                        statement_error.line_number,
+                        statement_error.line_num,
                         statement_number,
                         self.file
                     )));
