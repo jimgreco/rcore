@@ -21,10 +21,8 @@ pub(crate) struct StatementParserError {
 }
 
 impl StatementParserError {
-    pub(crate) fn new(
-            line_num: i32,
-            statement_num: i32,
-            error: StatementParserErrorType) -> StatementParserError {
+    pub(crate) fn new(line_num: i32, statement_num: i32, error: StatementParserErrorType)
+            -> StatementParserError {
         StatementParserError {
             line_num,
             statement_num,
@@ -43,11 +41,8 @@ pub(crate) struct Statement {
 }
 
 impl Statement {
-    pub(crate) fn new(
-            line_num: i32,
-            statement_num: i32,
-            words: Vec<String>,
-            statement: String) -> Statement {
+    pub(crate) fn new(line_num: i32, statement_num: i32, words: Vec<String>, statement: String)
+            -> Statement {
         Statement {
             line_num,
             statement_num,
@@ -84,7 +79,8 @@ impl<'a> StatementParser<'a> {
         }
     }
 
-    fn expand(&mut self, word: &String, in_quotes: bool) -> Result<String, StatementParserError> {
+    fn expand(&mut self, word: &String, in_quotes: bool)
+            -> Result<String, StatementParserErrorType> {
         let mut first_char = true;
         let mut in_replace = false;
         let mut in_replace_first_char = false;
@@ -101,23 +97,17 @@ impl<'a> StatementParser<'a> {
                     if in_replace {
                         if in_replace_first_char || has_curly_brackets {
                             // $ at the end of a line or missing the closing curly bracket ${foo}
-                            return Err(StatementParserError::new(
-                                self.line_num, self.statement_num,
-                                StatementParserErrorType::InvalidVariableFormat));
+                            return Err(StatementParserErrorType::InvalidVariableFormat);
                         } else if variable.is_empty() {
                             // end of argument
                             match self.context.get_argument(argument) {
-                                None => return Err(StatementParserError::new(
-                                    self.line_num, self.statement_num,
-                                    StatementParserErrorType::UnknownVariable)),
+                                None => return Err(StatementParserErrorType::UnknownVariable),
                                 Some(arg) => expanded.push_str(arg)
                             }
                         } else {
                             // end of variable
                             match self.context.get_value(&variable) {
-                                None => return Err(StatementParserError::new(
-                                    self.line_num, self.statement_num,
-                                    StatementParserErrorType::UnknownVariable)),
+                                None => return Err(StatementParserErrorType::UnknownVariable),
                                 Some(arg) => expanded.push_str(arg)
                             }
                         }
@@ -132,9 +122,7 @@ impl<'a> StatementParser<'a> {
                             // first char decides whether we are in an argument or variable
                             if c == '$' {
                                 if has_curly_brackets {
-                                    return Err(StatementParserError::new(
-                                        self.line_num, self.statement_num,
-                                        StatementParserErrorType::InvalidVariableFormat));
+                                    return Err(StatementParserErrorType::InvalidVariableFormat);
                                 }
 
                                 // double dollar sign is just a dollar sign character
@@ -153,9 +141,7 @@ impl<'a> StatementParser<'a> {
                                 // skip over curly bracket, ${foo}
                                 has_curly_brackets = true;
                             } else {
-                                return Err(StatementParserError::new(
-                                    self.line_num, self.statement_num,
-                                    StatementParserErrorType::InvalidVariableFormat));
+                                return Err(StatementParserErrorType::InvalidVariableFormat);
                             }
                         } else {
                             // second+ char
@@ -168,15 +154,11 @@ impl<'a> StatementParser<'a> {
                                     argument *= 10;
                                     argument += usize::try_from(c.to_digit(10).unwrap()).unwrap();
                                 } else if !in_quotes && (c.is_alphabetic() || c == '$') {
-                                    return Err(StatementParserError::new(
-                                        self.line_num, self.statement_num,
-                                        StatementParserErrorType::InvalidVariableFormat));
+                                    return Err(StatementParserErrorType::InvalidVariableFormat);
                                 } else {
                                     // finished reading the argument, get the value
                                     match self.context.get_argument(argument) {
-                                        None => return Err(StatementParserError::new(
-                                            self.line_num, self.statement_num,
-                                            StatementParserErrorType::UnknownVariable)),
+                                        None => return Err(StatementParserErrorType::UnknownVariable),
                                         Some(arg) => expanded.push_str(arg)
                                     }
                                     argument = 0;
@@ -188,15 +170,11 @@ impl<'a> StatementParser<'a> {
                                     // add to variable name
                                     variable.push(c);
                                 } else if !in_quotes && c == '$' {
-                                    return Err(StatementParserError::new(
-                                        self.line_num, self.statement_num,
-                                        StatementParserErrorType::InvalidVariableFormat));
+                                    return Err(StatementParserErrorType::InvalidVariableFormat);
                                 } else {
                                     // finished reading the variable, get the value out
                                     match self.context.get_value(&variable) {
-                                        None => return Err(StatementParserError::new(
-                                            self.line_num, self.statement_num,
-                                            StatementParserErrorType::UnknownVariable)),
+                                        None => return Err(StatementParserErrorType::UnknownVariable),
                                         Some(arg) => expanded.push_str(arg)
                                     }
                                     variable.clear();
@@ -207,9 +185,7 @@ impl<'a> StatementParser<'a> {
                             if did_expansion {
                                 if has_curly_brackets {
                                     if c != '}' {
-                                        return Err(StatementParserError::new(
-                                            self.line_num, self.statement_num,
-                                            StatementParserErrorType::InvalidVariableFormat));
+                                        return Err(StatementParserErrorType::InvalidVariableFormat);
                                     }
                                     in_replace = false;
                                     has_curly_brackets = false;
@@ -226,9 +202,7 @@ impl<'a> StatementParser<'a> {
                             in_replace = true;
                             in_replace_first_char = true;
                         } else {
-                            return Err(StatementParserError::new(
-                                self.line_num, self.statement_num,
-                                StatementParserErrorType::InvalidVariableFormat));
+                            return Err(StatementParserErrorType::InvalidVariableFormat);
                         }
                     } else {
                         // regular character
@@ -270,7 +244,8 @@ impl<'a> Iterator for StatementParser<'a> {
                     if !word.is_empty() {
                         match self.expand(&mut word, in_quotes) {
                             Ok(expanded) => words.push(expanded),
-                            Err(err) => return Some(Err(err))
+                            Err(e) => return Some(Err(
+                                StatementParserError::new(self.line_num, self.statement_num, e)))
                         }
                         word.clear();
                     }
@@ -299,7 +274,8 @@ impl<'a> Iterator for StatementParser<'a> {
                         if !word.is_empty() {
                             match self.expand(&word, in_quotes) {
                                 Ok(expanded) => words.push(expanded),
-                                Err(err) => return Some(Err(err))
+                                Err(e) => return Some(Err(
+                                    StatementParserError::new(self.line_num, self.statement_num, e)))
                             }
                             word.clear();
                         }
@@ -347,7 +323,8 @@ impl<'a> Iterator for StatementParser<'a> {
                                 // include zero length words
                                 match self.expand(&word, in_quotes) {
                                     Ok(expanded) => words.push(expanded),
-                                    Err(err) => return Some(Err(err))
+                                    Err(e) => return Some(Err(
+                                        StatementParserError::new(self.line_num, self.statement_num, e)))
                                 }
                                 word.clear();
                             }
@@ -358,7 +335,8 @@ impl<'a> Iterator for StatementParser<'a> {
                             if !word.is_empty() {
                                 match self.expand(&word, in_quotes) {
                                     Ok(expanded) => words.push(expanded),
-                                    Err(err) => return Some(Err(err))
+                                    Err(e) => return Some(Err(
+                                        StatementParserError::new(self.line_num, self.statement_num, e)))
                                 }
                                 word.clear();
                             }
@@ -372,7 +350,8 @@ impl<'a> Iterator for StatementParser<'a> {
                                 // end the current word
                                 match self.expand(&word, in_quotes) {
                                     Ok(expanded) => words.push(expanded),
-                                    Err(err) => return Some(Err(err))
+                                    Err(e) => return Some(Err(
+                                        StatementParserError::new(self.line_num, self.statement_num, e)))
                                 }
                                 word.clear();
                             }
@@ -384,10 +363,7 @@ impl<'a> Iterator for StatementParser<'a> {
                     }
                 }
             }
-
         }
-
-        None
     }
 }
 
