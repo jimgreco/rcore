@@ -1,7 +1,6 @@
-pub use self::statement_parser::CommandContext;
-pub use self::command_parser::CommandParser;
-pub use self::command_parser::CommandParserError;
-pub use self::command_parser::CommandParserErrorType;
+pub use self::parser::Parser;
+pub use self::parser::ParserError;
+pub use self::parser::ParserErrorType;
 
-pub mod statement_parser;
-pub mod command_parser;
+mod lexer;
+pub mod parser;

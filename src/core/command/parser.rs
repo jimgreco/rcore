@@ -1,8 +1,7 @@
-use crate::core::command::CommandContext;
-use crate::core::command::statement_parser::{SimpleContext, StatementParser, StatementParserErrorType};
+use crate::core::command::lexer::{Lexer, LexerContext, LexerErrorType, SimpleContext};
 
-pub trait Command {
-    fn execute(&self, context: &mut dyn CommandContext);
+pub trait ExecutableCommand {
+    fn execute(&self, context: &mut dyn LexerContext);
 }
 
 pub struct AssignmentCommand {
@@ -21,36 +20,34 @@ impl AssignmentCommand {
     }
 }
 
-impl Command for AssignmentCommand {
-    fn execute(&self, context: &mut dyn CommandContext) {
+impl ExecutableCommand for AssignmentCommand {
+    fn execute(&self, context: &mut dyn LexerContext) {
         context.set_value(&self.words[0], &self.words[2], self.words[1] == "=");
     }
 }
 
 #[derive(Debug)]
 #[derive(PartialEq)]
-pub enum CommandParserErrorType {
-    UnterminatedQuote,
-    InvalidEscapedCharacter,
-    UnknownVariable,
-    InvalidVariableFormat,
-    UnknownPositionVariable,
-    UnknownVariableName
+pub enum ParserErrorType {
+    LexerUnterminatedQuote,
+    LexerInvalidEscapedCharacter,
+    LexerUnknownVariable,
+    LexerInvalidVariableFormat
 }
 
-pub struct CommandParserError<'a> {
-    error_type: CommandParserErrorType,
+pub struct ParserError<'a> {
+    error_type: ParserErrorType,
     line_number: i32,
     statement_number: i32,
     line: String,
     file: &'a str
 }
 
-impl<'a> CommandParserError<'a> {
-    pub fn new(error_type: CommandParserErrorType,
+impl<'a> ParserError<'a> {
+    pub fn new(error_type: ParserErrorType,
                line_number: i32,
                statement_number: i32,
-               file: &str) -> CommandParserError {
+               file: &str) -> ParserError {
         let mut current_line = 1;
         let mut start = 0;
         let mut end = 0;
@@ -69,17 +66,17 @@ impl<'a> CommandParserError<'a> {
         }
 
         let line: String = file.chars().skip(start).take(end - start).collect();
-        CommandParserError { error_type, line_number, statement_number, line, file }
+        ParserError { error_type, line_number, statement_number, line, file }
     }
 }
 
-pub struct CommandParser<'a> {
+pub struct Parser<'a> {
     file: &'a str
 }
 
-impl<'a> CommandParser<'a> {
-    pub fn new(file: &'a mut str) -> CommandParser {
-        CommandParser {
+impl<'a> Parser<'a> {
+    pub fn new(file: &'a mut str) -> Parser {
+        Parser {
             file
         }
     }
@@ -100,23 +97,23 @@ impl<'a> CommandParser<'a> {
     }
 }
 
-impl<'a> Iterator for CommandParser<'a> {
-    type Item = Result<Box<dyn Command>, CommandParserError<'a>>;
+impl<'a> Iterator for Parser<'a> {
+    type Item = Result<Box<dyn ExecutableCommand>, ParserError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let context = SimpleContext::new();
-        let statement_parser = StatementParser::new(self.file, &context);
+        let statement_parser = Lexer::new(self.file, &context);
         let mut statement_number = 1;
 
         for statement_result in statement_parser {
             match statement_result {
                 Ok(statement) => {
-                    let words = statement.words;
+                    let words = statement.tokens;
 
                     if AssignmentCommand::is_command(&words) {
                         if !self.validate_variable(&words[0]) {
-                            return Some(Err(CommandParserError::new(
-                                CommandParserErrorType::UnknownVariable,
+                            return Some(Err(ParserError::new(
+                                ParserErrorType::LexerUnknownVariable,
                                 statement.line_num,
                                 statement_number,
                                 self.file
@@ -130,17 +127,17 @@ impl<'a> Iterator for CommandParser<'a> {
                 }
                 Err(statement_error) => {
                     let command_error_type = match statement_error.error {
-                        StatementParserErrorType::UnterminatedQuote =>
-                            CommandParserErrorType::UnterminatedQuote,
-                        StatementParserErrorType::InvalidEscapedCharacter =>
-                            CommandParserErrorType::InvalidEscapedCharacter,
-                        StatementParserErrorType::UnknownVariable =>
-                            CommandParserErrorType::UnknownVariable,
-                        StatementParserErrorType::InvalidVariableFormat =>
-                            CommandParserErrorType::InvalidVariableFormat
+                        LexerErrorType::UnterminatedQuote =>
+                            ParserErrorType::LexerUnterminatedQuote,
+                        LexerErrorType::InvalidEscapedCharacter =>
+                            ParserErrorType::LexerInvalidEscapedCharacter,
+                        LexerErrorType::UnknownVariable =>
+                            ParserErrorType::LexerUnknownVariable,
+                        LexerErrorType::InvalidVariableFormat =>
+                            ParserErrorType::LexerInvalidVariableFormat
                     };
 
-                    return Some(Err(CommandParserError::new(
+                    return Some(Err(ParserError::new(
                         command_error_type,
                         statement_error.line_num,
                         statement_number,
