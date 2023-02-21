@@ -1,0 +1,22 @@
+[package]
+name = "oso-derive"
+description = "macros for oso, an open source policy engine for authorization that’s embedded in your application"
+authors = ["Oso Security, Inc. <support@osohq.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/osohq/oso"
+readme = "README.md"
+
+version = "0.26.4"
+
+edition = "2021"
+
+[lib]
+proc-macro = true
+bench = false
+
+[dependencies]
+quote = "1.0.8"
+
+[dependencies.syn]
+version = "1.0.58"
+features = ["full"]
