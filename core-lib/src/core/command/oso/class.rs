@@ -4,29 +4,21 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-
-use crate::errors::{InvalidCallError, OsoError};
-
-use super::class_method::{
-    AttributeGetter, ClassMethod, Constructor, InstanceMethod //, RegisterHook,
-};
-use super::from_polar::FromPolarList;
+use crate::core::command::oso::Host;
+use super::{FromPolarList, InvalidCallError, OsoError, ParamType, ToPolar, ToPolarResult, PolarValue, PolarIterator, TypeError};
 use super::method::{Function, Method};
-use super::to_polar::ToPolarResult;
-use super::Host;
-use super::PolarValue;
+use super::class_method::{AttributeGetter, ClassMethod, Constructor, InstanceMethod};
 
 type Attributes = HashMap<&'static str, AttributeGetter>;
-//type RegisterHooks = Vec<RegisterHook>;
 type ClassMethods = HashMap<&'static str, ClassMethod>;
 type InstanceMethods = HashMap<&'static str, InstanceMethod>;
 
-type EqualityMethod = Arc<dyn Fn(&Host, &Instance, &Instance) -> crate::Result<bool> + Send + Sync>;
+type EqualityMethod = Arc<dyn Fn(&Host, &Instance, &Instance) -> super::Result<bool> + Send + Sync>;
 type IteratorMethod =
-    Arc<dyn Fn(&Host, &Instance) -> crate::Result<crate::host::PolarIterator> + Send + Sync>;
+    Arc<dyn Fn(&Host, &Instance) -> super::Result<super::PolarIterator> + Send + Sync>;
 
 fn equality_not_supported() -> EqualityMethod {
-    let eq = move |host: &Host, lhs: &Instance, _: &Instance| -> crate::Result<bool> {
+    let eq = move |host: &Host, lhs: &Instance, _: &Instance| -> super::Result<bool> {
         Err(OsoError::UnsupportedOperation {
             operation: String::from("equals"),
             type_name: lhs.name(host).to_owned(),
@@ -51,14 +43,16 @@ fn iterator_not_supported() -> IteratorMethod {
 pub struct Class {
     /// The class name. Defaults to the `std::any::type_name`
     pub name: String,
+    /// The fully qualified class name
+    pub fq_name: String,
     pub type_id: TypeId,
     /// A wrapped method that constructs an instance of `T` from `PolarValue`s
-    constructor: Option<Constructor>,
+    pub constructor: Option<Constructor>,
     /// Methods that return simple attribute lookups on an instance of `T`
     attributes: Attributes,
     /// Instance methods on `T` that expect a list of `PolarValue`s, and an instance of `&T`
-    instance_methods: InstanceMethods,
-    /// Class methods on `T`
+    pub instance_methods: InstanceMethods,
+        /// Class methods on `T`
     class_methods: ClassMethods,
 
     /// A function that accepts arguments of this class and compares them for equality.
@@ -76,20 +70,10 @@ impl Class {
         ClassBuilder::new()
     }
 
-    pub fn init(&self, fields: Vec<PolarValue>) -> crate::Result<Instance> {
-        if let Some(constructor) = &self.constructor {
-            constructor.invoke(fields)
-        } else {
-            Err(crate::OsoError::Custom {
-                message: format!("MissingConstructorError: {} has no constructor", self.name),
-            })
-        }
-    }
-
     /// Call class method `attr` on `self` with arguments from `args`.
     ///
     /// Returns: The result as a `PolarValue`
-    pub fn call(&self, attr: &str, args: Vec<PolarValue>) -> crate::Result<PolarValue> {
+    pub fn call(&self, attr: &str, args: Vec<PolarValue>) -> super::Result<PolarValue> {
         let attr =
             self.class_methods
                 .get(attr)
@@ -111,7 +95,7 @@ impl Class {
         }
     }
 
-    fn equals(&self, host: &Host, lhs: &Instance, rhs: &Instance) -> crate::Result<bool> {
+    fn equals(&self, host: &Host, lhs: &Instance, rhs: &Instance) -> super::Result<bool> {
         // equality checking is currently only supported for exactly matching types
         // TODO: support multiple dispatch for equality
         if lhs.type_id() != rhs.type_id() {
@@ -140,6 +124,7 @@ where
         Self {
             class: Class {
                 name: short_name.to_string(),
+                fq_name: fq_name.to_owned(),
                 constructor: None,
                 attributes: HashMap::new(),
                 instance_methods: InstanceMethods::new(),
@@ -159,29 +144,29 @@ where
         T: std::default::Default,
         T: Send + Sync,
     {
-        Self::with_constructor::<_, _>(T::default)
+        Self::with_constructor::<_, _>(T::default, vec![])
     }
 
     /// Create a new class builder with a given constructor.
-    pub fn with_constructor<F, Args>(f: F) -> Self
+    pub fn with_constructor<F, Args>(f: F, param_types: Vec<ParamType>) -> Self
     where
         F: Function<Args, Result = T>,
         T: Send + Sync,
         Args: FromPolarList,
     {
         let mut class: ClassBuilder<T> = ClassBuilder::new();
-        class = class.set_constructor(f);
+        class = class.set_constructor(f, param_types);
         class
     }
 
     /// Set the constructor function to use for polar `new` statements.
-    pub fn set_constructor<F, Args>(mut self, f: F) -> Self
+    pub fn set_constructor<F, Args>(mut self, f: F, param_types: Vec<ParamType>) -> Self
     where
         F: Function<Args, Result = T>,
         T: Send + Sync,
         Args: FromPolarList,
     {
-        self.class.constructor = Some(Constructor::new(f));
+        self.class.constructor = Some(Constructor::new(f, param_types));
         self
     }
 
@@ -214,7 +199,7 @@ where
 
             let instance = instance.downcast(Some(host)).map_err(|e| e.user())?;
 
-            Ok(crate::host::PolarIterator::new(f(instance)))
+            Ok(PolarIterator::new(f(instance)))
         });
 
         self
@@ -243,7 +228,7 @@ where
     pub fn add_attribute_getter<F, R>(mut self, name: &'static str, f: F) -> Self
     where
         F: Fn(&T) -> R + Send + Sync + 'static,
-        R: crate::ToPolar,
+        R: ToPolar,
         T: 'static,
     {
         self.class.attributes.insert(name, AttributeGetter::new(f));
@@ -256,32 +241,33 @@ where
         self
     }
 
-    /*
-    /// Add a RegisterHook on the class that will register the given constant once the class is registered.
-    pub fn add_constant<V: crate::ToPolar + Clone + Send + Sync + 'static>(
+    /// Add a method for polar method calls like `foo.plus(i32)
+    pub fn add_method<F, Args, R>(
         mut self,
-        value: V,
         name: &'static str,
-    ) -> Self {
-        let register_hook = move |oso: &mut crate::Oso| oso.register_constant(value.clone(), name);
-        self.class
-            .register_hooks
-            .push(RegisterHook::new(register_hook));
-        self
+        f: F) -> Self
+        where
+            Args: FromPolarList,
+            F: Method<T, Args, Result = R>,
+            R: ToPolarResult + 'static,
+    {
+        self.add_typed_method(name, f, vec![])
     }
-     */
 
-    /// Add a method for polar method calls like `foo.plus(1)
-    /// `class.add_attribute_getter("bar", |instance, n| instance.foo + n)
-    pub fn add_method<F, Args, R>(mut self, name: &'static str, f: F) -> Self
-    where
-        Args: FromPolarList,
-        F: Method<T, Args, Result = R>,
-        R: ToPolarResult + 'static,
+    /// Add a method for polar method calls like `foo.plus(i32)
+    pub fn add_typed_method<F, Args, R>(
+            mut self,
+            name: &'static str,
+            f: F,
+            param_types: Vec<ParamType>) -> Self
+        where
+            Args: FromPolarList,
+            F: Method<T, Args, Result = R>,
+            R: ToPolarResult + 'static,
     {
         self.class
             .instance_methods
-            .insert(name, InstanceMethod::new(f));
+            .insert(name, InstanceMethod::new(f, param_types));
         self
     }
 
@@ -359,12 +345,12 @@ impl Instance {
         self.type_id() == class.type_id
     }
 
-    pub fn type_id(&self) -> std::any::TypeId {
+    pub fn type_id(&self) -> TypeId {
         self.inner.as_ref().type_id()
     }
 
     /// Looks up the `Class` for this instance on the provided `host`
-    pub fn class<'a>(&self, host: &'a Host) -> crate::Result<&'a Class> {
+    pub fn class<'a>(&self, host: &'a Host) -> super::Result<&'a Class> {
         host.get_class_by_type_id(self.inner.as_ref().type_id())
             .map_err(|_| OsoError::MissingClassError {
                 name: self.debug_type_name.to_string(),
@@ -382,7 +368,7 @@ impl Instance {
     }
 
     /// Lookup an attribute on the instance via the registered `Class`
-    pub fn get_attr(&self, name: &str, host: &Host) -> crate::Result<PolarValue> {
+    pub fn get_attr(&self, name: &str, host: &Host) -> super::Result<PolarValue> {
         tracing::trace!({ method = %name }, "get_attr");
         let attr = self
             .class(host)
@@ -407,7 +393,7 @@ impl Instance {
         name: &str,
         args: Vec<PolarValue>,
         host: &Host,
-    ) -> crate::Result<PolarValue> {
+    ) -> super::Result<PolarValue> {
         tracing::trace!({method = %name, ?args}, "call");
         let method = self.class(host).and_then(|c| {
             c.get_method(name).ok_or_else(|| {
@@ -421,12 +407,12 @@ impl Instance {
         method.invoke(self, args, host)
     }
 
-    pub fn as_iter(&self, host: &Host) -> crate::Result<crate::host::PolarIterator> {
+    pub fn as_iter(&self, host: &Host) -> super::Result<PolarIterator> {
         self.class(host).and_then(|c| (c.into_iter)(host, self))
     }
 
     /// Return `true` if the `instance` of self equals the instance of `other`.
-    pub fn equals(&self, other: &Self, host: &Host) -> crate::Result<bool> {
+    pub fn equals(&self, other: &Self, host: &Host) -> super::Result<bool> {
         tracing::trace!("equals");
         self.class(host)
             .and_then(|class| class.equals(host, self, other))
@@ -441,7 +427,7 @@ impl Instance {
     pub fn downcast<T: 'static>(
         &self,
         host: Option<&Host>,
-    ) -> Result<&T, crate::errors::TypeError> {
+    ) -> Result<&T, TypeError> {
         let name = host
             .map(|h| self.name(h).to_owned())
             .unwrap_or_else(|| self.debug_type_name.to_owned());
@@ -457,13 +443,13 @@ impl Instance {
         self.inner
             .as_ref()
             .downcast_ref()
-            .ok_or_else(|| crate::errors::TypeError::expected(expected_name).got(name))
+            .ok_or_else(|| TypeError::expected(expected_name).got(name))
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use crate::core::command::oso::{Class, Instance};
 
     #[test]
     fn test_instance_of() {

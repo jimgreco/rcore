@@ -1,4 +1,4 @@
 mod lexer;
-mod oso_integration;
+mod registry;
 pub mod parser;
-
+pub mod oso;

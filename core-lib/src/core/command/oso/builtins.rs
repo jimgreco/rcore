@@ -1,9 +1,8 @@
 //! Builtin types supported in Polar
 
-use crate::PolarValue;
 use std::collections::HashMap;
 
-use crate::{Class, ClassBuilder};
+use super::{Class, ClassBuilder, PolarValue};
 
 fn boolean() -> ClassBuilder<bool> {
     ClassBuilder::<bool>::with_default()

@@ -8,7 +8,7 @@ use impl_trait_for_tuples::*;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque};
 
 use super::DEFAULT_CLASSES;
-use crate::PolarValue;
+use super::{ClassBuilder, PolarClass, PolarValue};
 
 /// Convert Rust types to Polar types.
 ///
@@ -35,7 +35,7 @@ pub trait ToPolar {
     fn to_polar(self) -> PolarValue;
 }
 
-impl<C: crate::PolarClass + Send + Sync> ToPolar for C {
+impl<C: super::PolarClass + Send + Sync> ToPolar for C {
     fn to_polar(self) -> PolarValue {
         let registered = DEFAULT_CLASSES
             .read()
@@ -56,19 +56,19 @@ impl<C: crate::PolarClass + Send + Sync> ToPolar for C {
 }
 
 pub trait ToPolarResult {
-    fn to_polar_result(self) -> crate::Result<PolarValue>;
+    fn to_polar_result(self) -> super::Result<PolarValue>;
 }
 
 impl<R: ToPolar> ToPolarResult for R {
-    fn to_polar_result(self) -> crate::Result<PolarValue> {
+    fn to_polar_result(self) -> super::Result<PolarValue> {
         Ok(self.to_polar())
     }
 }
 
 impl<E: std::error::Error + Send + Sync + 'static, R: ToPolar> ToPolarResult for Result<R, E> {
-    fn to_polar_result(self) -> crate::Result<PolarValue> {
+    fn to_polar_result(self) -> super::Result<PolarValue> {
         self.map(|r| r.to_polar())
-            .map_err(|e| crate::OsoError::ApplicationError {
+            .map_err(|e| super::OsoError::ApplicationError {
                 source: Box::new(e),
                 attr: None,
                 type_name: None,
@@ -254,7 +254,7 @@ impl PolarIterator {
 }
 
 impl Iterator for PolarIterator {
-    type Item = crate::Result<PolarValue>;
+    type Item = super::Result<PolarValue>;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
     }
@@ -265,15 +265,15 @@ impl Clone for PolarIterator {
         Self(self.0.box_clone())
     }
 }
-impl crate::PolarClass for PolarIterator {
-    fn get_polar_class_builder() -> crate::ClassBuilder<Self> {
-        crate::Class::builder::<Self>().with_iter()
+impl PolarClass for PolarIterator {
+    fn get_polar_class_builder() -> ClassBuilder<Self> {
+        super::Class::builder::<Self>().with_iter()
     }
 }
 
 pub trait PolarResultIter: Send + Sync {
     fn box_clone(&self) -> Box<dyn PolarResultIter>;
-    fn next(&mut self) -> Option<crate::Result<PolarValue>>;
+    fn next(&mut self) -> Option<super::Result<PolarValue>>;
 }
 
 impl<I, V> PolarResultIter for I
@@ -285,7 +285,7 @@ where
         Box::new(self.clone())
     }
 
-    fn next(&mut self) -> Option<crate::Result<PolarValue>> {
+    fn next(&mut self) -> Option<super::Result<PolarValue>> {
         Iterator::next(self).map(|v| v.to_polar_result())
     }
 }
