@@ -7,7 +7,9 @@ edition = "2021"
 
 [dependencies]
 impl-trait-for-tuples = "0.2.1"
+lazy_static = "1.4.0"
+oso-derive = { path = "../oso-derive" }
+rand = "0.7.3"
+thiserror = "1.0.30"
 tokio = { version = "1.24.2", features = ["full"] }
 tracing = { version = "0.1.29", features = ["log"] }
-oso = { path = "../oso" }
-oso-derive = { path = "../oso-derive" }

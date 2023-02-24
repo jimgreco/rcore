@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{
-    Attribute, Data, DataEnum, DataStruct, Fields, Lit, Meta, MetaNameValue, NestedMeta, Path,
+    Attribute, Data, DataEnum, DataStruct, Fields, Lit, Meta, MetaNameValue, NestedMeta, Path
 };
 
 #[derive(Debug, PartialEq)]
@@ -136,15 +136,15 @@ pub fn derive_polar_class_impl(ts: TokenStream) -> TokenStream {
     }
 
     let result = quote! {
-        impl oso::PolarClass for #type_name {
-            fn get_polar_class_builder() -> oso::ClassBuilder<#type_name> {
-                oso::Class::builder()
+        impl crate::core::command::oso::PolarClass for #type_name {
+            fn get_polar_class_builder() -> crate::core::command::oso::ClassBuilder<#type_name> {
+                crate::core::command::oso::Class::builder()
                     .name(#class_name)
                     #(#getters)*
                     #(#constants)*
             }
 
-            fn get_polar_class() -> oso::Class {
+            fn get_polar_class() -> crate::core::command::oso::Class {
                 let builder = #type_name::get_polar_class_builder();
                 builder.build()
             }
