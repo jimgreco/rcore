@@ -202,6 +202,37 @@ impl CommandRegistry {
             path.owner = owner;
             path.method = method;
             path.attr = attr;
+
+            let instance = path.instance.as_ref().unwrap();
+            let class = instance.class(&self.host).unwrap().clone();
+
+            for (name, method) in &class.instance_methods {
+                let command_path = match method.path() {
+                    None => *name,
+                    Some(command_path) => command_path
+                };
+                self.create_path(
+                    &path.full_path,
+                    command_path,
+                    true,
+                    None,
+                    Some(path.id),
+                    Some(name.to_string()),
+                    None)?;
+            }
+            for (attr_name, attr) in &class.attributes {
+                // TODO: customize attribute path
+                let attr_path = attr_name;
+                self.create_path(
+                    &path.full_path,
+                    attr_path,
+                    true,
+                    None,
+                    Some(path.id),
+                    None,
+                    Some(attr_name.to_string()))?;
+            }
+
             Ok(path)
         } else {
             Err(CommandError::DuplicatePath {
@@ -209,40 +240,6 @@ impl CommandRegistry {
                 cd: cd.to_owned()
             })
         }
-    }
-
-    fn add_children(&mut self, path: &CommandPath) -> Result<(), CommandError> {
-        let instance = path.instance.as_ref().unwrap();
-        let class = instance.class(&self.host).unwrap();
-
-        for (name, method) in &class.instance_methods {
-            let command_path = match method.path() {
-                None => *name,
-                Some(command_path) => command_path
-            };
-            self.create_path(
-                &path.full_path,
-                command_path,
-                true,
-                None,
-                Some(path.id),
-                Some(name.to_string()),
-                None)?;
-        }
-        for (attr_name, attr) in &class.attributes {
-            // TODO: customize attribute path
-            let attr_path = attr_name;
-            self.create_path(
-                &path.full_path,
-                attr_path,
-                true,
-                None,
-                Some(path.id),
-                None,
-                Some(attr_name.to_string()))?;
-        }
-
-        Ok(())
     }
 
     fn create_child(&mut self, pwd: usize, name: &str) -> Result<usize, CommandError> {
@@ -821,9 +818,9 @@ mod registry_tests {
     #[test]
     fn get_attribute() {
         let mut registry = create_registry();
-        registry.make_instance("foo",  ".", "User2", &vec!["jim", "42"]).unwrap();
+        registry.make_instance("/foo",  ".", "User2", &vec!["jim", "42"]).unwrap();
 
-        let result = registry.get_attr("foo/user_id").unwrap();
+        let result = registry.get_attr("/foo/user_id").unwrap();
 
         assert_eq!(42, result);
     }
