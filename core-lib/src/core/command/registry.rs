@@ -160,8 +160,8 @@ impl CommandRegistry {
         }
     }
 
-    pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<&CommandPath, CommandError> {
-        self.create_path(pwd, cd, true, None, None, None, None)
+    pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<(), CommandError> {
+        self.create_path(pwd, cd, true, None, None, None, None, None)
     }
 
     fn create_path(
@@ -170,9 +170,10 @@ impl CommandRegistry {
             cd: &str,
             fail_on_duplicate: bool,
             instance: Option<Instance>,
+            class: Option<&Class>,
             owner: Option<usize>,
             method: Option<String>,
-            attr: Option<String>) -> Result<&CommandPath, CommandError> {
+            attr: Option<String>) -> Result<(), CommandError> {
         let mut pwd_node = self.get_path_by_id(self.root_id)?;
         let mut created = false;
 
@@ -197,43 +198,58 @@ impl CommandRegistry {
         }
 
         if created || (!fail_on_duplicate && pwd_node.instance.is_none()) {
-            let path = self.get_path_by_id_mut(pwd_node.id).unwrap();
-            path.instance = instance;
-            path.owner = owner;
-            path.method = method;
-            path.attr = attr;
 
-            let instance = path.instance.as_ref().unwrap();
-            let class = instance.class(&self.host).unwrap().clone();
 
-            for (name, method) in &class.instance_methods {
-                let command_path = match method.path() {
-                    None => *name,
-                    Some(command_path) => command_path
-                };
-                self.create_path(
-                    &path.full_path,
-                    command_path,
-                    true,
-                    None,
-                    Some(path.id),
-                    Some(name.to_string()),
-                    None)?;
+            if instance.is_some() {
+                let class = instance.as_ref().unwrap().class(&self.host).unwrap();
+                let instance_methods = class.instance_methods.clone();
+                let attributes = class.attributes.clone();
+
+                let path = self.get_path_by_id_mut(pwd_node.id).unwrap();
+                path.owner = owner;
+                path.method = method;
+                path.attr = attr;
+                path.instance = instance;
+
+                let full_path = path.full_path.clone();
+                let id = path.id;
+
+                for (name, method) in instance_methods {
+                    let command_path = match method.path() {
+                        None => name,
+                        Some(command_path) => command_path
+                    };
+                    self.create_path(
+                        &full_path,
+                        command_path,
+                        true,
+                        None,
+                        None,
+                        Some(id),
+                        Some(name.to_string()),
+                        None)?;
+                }
+                for (attr_name, attr) in attributes {
+                    // TODO: customize attribute path
+                    let attr_path = attr_name;
+                    self.create_path(
+                        &full_path,
+                        attr_path,
+                        true,
+                        None,
+                        None,
+                        Some(id),
+                        None,
+                        Some(attr_name.to_string()))?;
+                }
+            } else {
+                let path = self.get_path_by_id_mut(pwd_node.id).unwrap();
+                path.owner = owner;
+                path.method = method;
+                path.attr = attr;
             }
-            for (attr_name, attr) in &class.attributes {
-                // TODO: customize attribute path
-                let attr_path = attr_name;
-                self.create_path(
-                    &path.full_path,
-                    attr_path,
-                    true,
-                    None,
-                    Some(path.id),
-                    None,
-                    Some(attr_name.to_string()))?;
-            }
 
-            Ok(path)
+            Ok(())
         } else {
             Err(CommandError::DuplicatePath {
                 pwd: pwd.to_string(),
@@ -354,7 +370,7 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             class_name: &str,
-            args: &Vec<&str>) -> Result<&CommandPath, CommandError> {
+            args: &Vec<&str>) -> Result<(), CommandError> {
         // get the right constructor
         let class = self.get_class(class_name)?;
         let constructor = match &class.constructor {
@@ -406,7 +422,7 @@ impl CommandRegistry {
                 reason: "failed to make instance",
                 error: e,
             })?;
-        self.create_path(pwd, cd, false, Some(instance), None, None, None)
+        self.create_path(pwd, cd, false, Some(instance), None, None, None, None)
     }
 
     fn parse<T: FromStr>(
@@ -427,7 +443,7 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             class_name: &str,
-            params: Vec<PolarValue>) -> Result<&CommandPath, CommandError>{
+            params: Vec<PolarValue>) -> Result<(), CommandError>{
         // get the right constructor
         let class = self.get_class(class_name)?;
         let constructor = match &class.constructor {
@@ -449,10 +465,10 @@ impl CommandRegistry {
                 reason: "failed to make instance",
                 error: e,
             })?;
-        self.create_path(pwd, cd, false, Some(instance), None, None, None)
+        self.create_path(pwd, cd, false, Some(instance), None, None, None, None)
     }
 
-    pub fn get_object<T: 'static>(&self, pwd: &str) -> Result<&T, CommandError> {
+    pub fn get_instance<T: 'static>(&self, pwd: &str) -> Result<&T, CommandError> {
         match self.get_path(pwd) {
             Ok(path) => match &path.instance {
                 None => Err(CommandError::NoInstanceAtPath(pwd.to_owned())),
@@ -536,10 +552,11 @@ mod path_tests {
     #[test]
     fn mkdir_absolute_directory() {
         let mut registry = CommandRegistry::new();
-        registry.mkdir("/bar/me", "/foo").unwrap();
+        registry.mkdir("/bar/me", "/foo");
 
-        let node = registry.mkdir("/foo", "/bar/soo").unwrap();
+        registry.mkdir("/foo", "/bar/soo");
 
+        let node = registry.get_path("/bar/soo").unwrap();
         assert_eq!("/bar/soo", node.full_path);
     }
 
@@ -547,8 +564,9 @@ mod path_tests {
     fn mkdir_creates_child_directory() {
         let mut registry = CommandRegistry::new();
 
-        let node = registry.mkdir("/", "foo").unwrap();
+        registry.mkdir("/", "foo");
 
+        let node = registry.get_path("/foo").unwrap();
         assert_eq!("foo", node.name);
         assert_eq!("/foo", node.full_path);
         assert_eq!(0, node.children.len());
@@ -559,7 +577,7 @@ mod path_tests {
     fn mkdir_creates_grandchild_directories() {
         let mut registry = CommandRegistry::new();
 
-        registry.mkdir("/", "foo/bar/soo").unwrap();
+        registry.mkdir("/", "foo/bar/soo");
 
         // then
         let root = registry.get_path("/").unwrap();
@@ -594,8 +612,9 @@ mod path_tests {
         let mut registry = CommandRegistry::new();
         registry.mkdir("/", "/foo/bar");
 
-        let node = registry.mkdir("/foo/bar", "../soo").unwrap();
+        registry.mkdir("/foo/bar", "../soo").unwrap();
 
+        let node = registry.get_path("/foo/soo").unwrap();
         assert_eq!("/foo/soo", node.full_path);
     }
 
@@ -604,8 +623,9 @@ mod path_tests {
         let mut registry = CommandRegistry::new();
         registry.mkdir("/", "/foo/bar");
 
-        let node = registry.mkdir("/foo/bar", "/soo").unwrap();
+        registry.mkdir("/foo/bar", "/soo");
 
+        let node = registry.get_path("/soo").unwrap();
         assert_eq!("/soo", node.full_path);
     }
 
@@ -614,8 +634,9 @@ mod path_tests {
         let mut registry = CommandRegistry::new();
         registry.mkdir("/", "/foo/bar");
 
-        let node = registry.mkdir("/foo/bar", "./soo").unwrap();
+        registry.mkdir("/foo/bar", "./soo");
 
+        let node = registry.get_path("/foo/bar/soo").unwrap();
         assert_eq!("/foo/bar/soo", node.full_path);
     }
 
@@ -624,8 +645,9 @@ mod path_tests {
         let mut registry = CommandRegistry::new();
         registry.mkdir("/", "/foo/bar");
 
-        let node = registry.mkdir("/foo/bar", "soo///doo").unwrap();
+        registry.mkdir("/foo/bar", "soo///doo");
 
+        let node = registry.get_path("/foo/bar/soo/doo").unwrap();
         assert_eq!("/foo/bar/soo/doo", node.full_path);
     }
 
@@ -749,7 +771,7 @@ mod registry_tests {
 
         registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
 
-        let user = registry.get_object::<User>("/foo").unwrap();
+        let user = registry.get_instance::<User>("/foo").unwrap();
         assert_eq!(user.username, "jim");
     }
 
@@ -759,7 +781,7 @@ mod registry_tests {
 
         registry.make_polar_instance("/foo", ".", "User2", vec![PolarValue::String("jim".to_owned()), PolarValue::Integer(42)]).unwrap();
 
-        let user = registry.get_object::<User2>("/foo").unwrap();
+        let user = registry.get_instance::<User2>("/foo").unwrap();
         assert_eq!(user.username, "jim");
         assert_eq!(user.user_id, 42);
     }
@@ -770,7 +792,7 @@ mod registry_tests {
 
         registry.make_instance("/foo", ".", "User", &vec!["jim"]).unwrap();
 
-        let user = registry.get_object::<User2>("/foo").unwrap();
+        let user = registry.get_instance::<User>("/foo").unwrap();
         assert_eq!(user.username, "jim");
     }
 
@@ -780,7 +802,7 @@ mod registry_tests {
 
         registry.make_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
 
-        let user = registry.get_object::<User2>("/foo").unwrap();
+        let user = registry.get_instance::<User2>("/foo").unwrap();
         assert_eq!(user.username, "jim");
         assert_eq!(user.user_id, 42);
     }
@@ -792,7 +814,7 @@ mod registry_tests {
 
         registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
 
-        let user = registry.get_object::<User2>("/foo").unwrap();
+        let user = registry.get_instance::<User>("/foo").unwrap();
         assert_eq!(user.username, "jim");
     }
 
@@ -811,7 +833,7 @@ mod registry_tests {
             },
             _ => assert!(false)
         }
-        let user = registry.get_object::<User2>("/foo").unwrap();
+        let user = registry.get_instance::<User>("/foo").unwrap();
         assert_eq!(user.username, "jim");
     }
 
@@ -823,6 +845,35 @@ mod registry_tests {
         let result = registry.get_attr("/foo/user_id").unwrap();
 
         assert_eq!(42, result);
+    }
+
+    #[test]
+    fn get_attribute_wrong_path_is_error() {
+        let mut registry = create_registry();
+        registry.make_instance("/foo",  ".", "User2", &vec!["jim", "42"]).unwrap();
+
+        let result = registry.get_attr::<i32>("/foo").err().unwrap();
+
+        match result {
+            CommandError::PathIsNotAnAttribute(e) => assert_eq!(e, "/foo".to_string()),
+            _ => assert!(false)
+        }
+    }
+
+    #[test]
+    fn get_attribute_wrong_type_is_error() {
+        let mut registry = create_registry();
+        registry.make_instance("/foo",  ".", "User2", &vec!["jim", "42"]).unwrap();
+
+        let result = registry.get_attr::<f64>("/foo/user_id").err().unwrap();
+
+        match result {
+            CommandError::InvalidCast { path, cast_type, expected, got } => {
+                assert_eq!("/foo/user_id", path);
+                assert_eq!("Float", expected);
+            },
+            _ => assert!(false)
+        }
     }
 
     /*
