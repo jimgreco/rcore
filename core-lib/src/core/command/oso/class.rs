@@ -49,7 +49,7 @@ pub struct Class {
     /// A wrapped method that constructs an instance of `T` from `PolarValue`s
     pub constructor: Option<Constructor>,
     /// Methods that return simple attribute lookups on an instance of `T`
-    attributes: Attributes,
+    pub attributes: Attributes,
     /// Instance methods on `T` that expect a list of `PolarValue`s, and an instance of `&T`
     pub instance_methods: InstanceMethods,
         /// Class methods on `T`
@@ -251,7 +251,7 @@ where
             F: Method<T, Args, Result = R>,
             R: ToPolarResult + 'static,
     {
-        self.add_typed_method(name, f, vec![])
+        self.add_typed_method(name, f, vec![], None)
     }
 
     /// Add a method for polar method calls like `foo.plus(i32)
@@ -259,7 +259,8 @@ where
             mut self,
             name: &'static str,
             f: F,
-            param_types: Vec<ParamType>) -> Self
+            param_types: Vec<ParamType>,
+            path: Option<String>) -> Self
         where
             Args: FromPolarList,
             F: Method<T, Args, Result = R>,
@@ -267,7 +268,7 @@ where
     {
         self.class
             .instance_methods
-            .insert(name, InstanceMethod::new(f, param_types));
+            .insert(name, InstanceMethod::new(f, param_types, path));
         self
     }
 

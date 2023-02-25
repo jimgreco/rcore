@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::iter::Map;
 use std::rc::Weak;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use crate::core::command::oso::{Host, ToPolar};
+use crate::core::command::oso::{FromPolar, Host, ToPolar, TypeError};
 use super::oso::{builtins, Class, Instance, InvalidCallError, OsoError, ParamType, PolarValue, PolarClass};
 
 extern crate rand;
@@ -13,14 +13,16 @@ extern crate rand;
 #[derive(Debug)]
 pub enum CommandError {
     InvalidPathSegment(String),
-    UnknownDirectory(usize),
+    UnknownPath(String),
+    NoInstanceAtPath(String),
+    UnknownPathId(usize),
     PathNavigationError {
         /// the working directories name
         pwd: String,
         /// the change directory command
         cd: String
     },
-    DuplicatePathError {
+    DuplicatePath {
         /// the working directories name
         pwd: String,
         /// the change directory command
@@ -44,12 +46,14 @@ pub enum CommandError {
         class: String,
         method: String,
         param_index: usize,
-        param_type: ParamType
+        param_type: ParamType,
+        reason: &'static str
     },
     InvalidConstructorParameter {
         class: String,
         param_index: usize,
-        param_type: ParamType
+        param_type: ParamType,
+        reason: &'static str
     },
     InvalidParameterConversion {
         class: String,
@@ -58,8 +62,20 @@ pub enum CommandError {
         param_type: ParamType,
         value: String
     },
-    InternalConstructorError {
+    PathIsNotAnAttribute(String),
+    InvalidCast {
+        path: String,
+        cast_type: &'static str,
+        expected: String,
+        got: Option<String>
+    },
+    ClassChildConflict {
         class: String,
+        child: String
+    },
+    InternalError {
+        path: String,
+        reason: &'static str,
         error: OsoError
     }
 }
@@ -88,12 +104,15 @@ impl CommandRegistry {
             instance: None,
             name: "".to_owned(),
             parent: None,
-            path: "/".to_owned()
+            full_path: "/".to_owned(),
+            owner: None,
+            method: None,
+            attr: None
         });
         reg
     }
 
-    pub fn to_path_segments(pwd: &str, cd: &str) -> Result<Vec<String>, CommandError> {
+    fn to_path_segments(pwd: &str, cd: &str) -> Result<Vec<String>, CommandError> {
         let mut segments: Vec<String> = Vec::new();
 
         let mut first = true;
@@ -127,8 +146,22 @@ impl CommandRegistry {
         Ok(segments)
     }
 
+    fn to_path_str(pwd: &str, cd: &str) -> Result<String, CommandError> {
+        let segments = CommandRegistry::to_path_segments(pwd, cd)?;
+        if segments.is_empty() {
+            Ok("/".to_owned())
+        } else {
+            let mut str = "".to_owned();
+            for segment in segments {
+                str.push_str("/");
+                str.push_str(&segment);
+            }
+            Ok(str)
+        }
+    }
+
     pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<&CommandPath, CommandError> {
-        self.create_path(pwd, cd, true, None)
+        self.create_path(pwd, cd, true, None, None, None, None)
     }
 
     fn create_path(
@@ -136,7 +169,10 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             fail_on_duplicate: bool,
-            instance: Option<Instance>) -> Result<&CommandPath, CommandError> {
+            instance: Option<Instance>,
+            owner: Option<usize>,
+            method: Option<String>,
+            attr: Option<String>) -> Result<&CommandPath, CommandError> {
         let mut pwd_node = self.get_path_by_id(self.root_id)?;
         let mut created = false;
 
@@ -163,13 +199,50 @@ impl CommandRegistry {
         if created || (!fail_on_duplicate && pwd_node.instance.is_none()) {
             let path = self.get_path_by_id_mut(pwd_node.id).unwrap();
             path.instance = instance;
+            path.owner = owner;
+            path.method = method;
+            path.attr = attr;
             Ok(path)
         } else {
-            Err(CommandError::DuplicatePathError {
+            Err(CommandError::DuplicatePath {
                 pwd: pwd.to_string(),
                 cd: cd.to_owned()
             })
         }
+    }
+
+    fn add_children(&mut self, path: &CommandPath) -> Result<(), CommandError> {
+        let instance = path.instance.as_ref().unwrap();
+        let class = instance.class(&self.host).unwrap();
+
+        for (name, method) in &class.instance_methods {
+            let command_path = match method.path() {
+                None => *name,
+                Some(command_path) => command_path
+            };
+            self.create_path(
+                &path.full_path,
+                command_path,
+                true,
+                None,
+                Some(path.id),
+                Some(name.to_string()),
+                None)?;
+        }
+        for (attr_name, attr) in &class.attributes {
+            // TODO: customize attribute path
+            let attr_path = attr_name;
+            self.create_path(
+                &path.full_path,
+                attr_path,
+                true,
+                None,
+                Some(path.id),
+                None,
+                Some(attr_name.to_string()))?;
+        }
+
+        Ok(())
     }
 
     fn create_child(&mut self, pwd: usize, name: &str) -> Result<usize, CommandError> {
@@ -178,7 +251,7 @@ impl CommandRegistry {
                 if name.is_empty() || name == "." || name == ".." {
                     Err(CommandError::InvalidPathSegment(name.to_owned()))
                 } else {
-                    let path_copy = parent.path.clone();
+                    let path_copy = parent.full_path.clone();
                     let child_id = rand::random();
                     let child = CommandPath {
                         children: vec![],
@@ -186,17 +259,20 @@ impl CommandRegistry {
                         instance: None,
                         name: name.to_owned(),
                         parent: Some(parent.id),
-                        path: match parent.parent {
+                        full_path: match parent.parent {
                             None => path_copy + name,
                             Some(_) => path_copy + "/" + name
-                        }
+                        },
+                        owner: None,
+                        method: None,
+                        attr: None
                     };
                     parent.children.push(child_id);
                     self.paths.insert(child_id, child);
                     Ok(child_id)
                 }
             }
-            None => Err(CommandError::UnknownDirectory(pwd))
+            None => Err(CommandError::UnknownPathId(pwd))
         }
     }
 
@@ -234,14 +310,14 @@ impl CommandRegistry {
     fn get_path_by_id(&self, id: usize) -> Result<&CommandPath, CommandError> {
         match self.paths.get(&id) {
             Some(v) => Ok(v),
-            None => Err(CommandError::UnknownDirectory(id))
+            None => Err(CommandError::UnknownPathId(id))
         }
     }
 
     fn get_path_by_id_mut(&mut self, id: usize) -> Result<&mut CommandPath, CommandError> {
         match self.paths.get_mut(&id) {
             Some(v) => Ok(v),
-            None => Err(CommandError::UnknownDirectory(id))
+            None => Err(CommandError::UnknownPathId(id))
         }
     }
 
@@ -251,6 +327,26 @@ impl CommandRegistry {
 
     pub fn cache_class(&mut self, class: Class) -> Result<(), CommandError> {
         let class_name = class.fq_name.to_owned();
+
+        // check to ensure that attributes and instance methods don't conflict
+        let mut name_conflict = HashSet::new();
+        for attr in class.attributes.keys() {
+            if !name_conflict.insert(attr) {
+                return Err(CommandError::ClassChildConflict {
+                    class: class_name,
+                    child: attr.to_string(),
+                })
+            }
+        }
+        for method in class.instance_methods.keys() {
+            if !name_conflict.insert(method) {
+                return Err(CommandError::ClassChildConflict {
+                    class: class_name,
+                    child: method.to_string(),
+                })
+            }
+        }
+
         self.host.cache_class(class).map_err(|e| {
             CommandError::DuplicateClass(class_name)
         })
@@ -285,40 +381,51 @@ impl CommandRegistry {
 
             let polar_value = match pt {
                 ParamType::Boolean =>
-                    CommandRegistry::parse::<bool>(arg, class_name, i, pt)?.to_polar(),
+                    Ok(CommandRegistry::parse::<bool>(arg, class_name, i, pt)?.to_polar()),
                 ParamType::Integer =>
-                    CommandRegistry::parse::<i32>(arg, class_name, i, pt)?.to_polar(),
+                    Ok(CommandRegistry::parse::<i32>(arg, class_name, i, pt)?.to_polar()),
                 ParamType::Float =>
-                    CommandRegistry::parse::<f64>(arg, class_name, i, pt)?.to_polar(),
-                ParamType::String => PolarValue::String(arg.to_owned()),
-                /*ParamType::Instance => {
-                    match self.get_instance(arg) {
-                        Ok(instance) => PolarValue::new_from_instance(instance.to_owned()),
-                        Err(e) => return Err(CommandError::InvalidConstructorParameter {
+                    Ok(CommandRegistry::parse::<f64>(arg, class_name, i, pt)?.to_polar()),
+                ParamType::String => Ok(PolarValue::String(arg.to_owned())),
+                ParamType::Instance => {
+                    let path = self.get_path(arg)?;
+                    match &path.instance {
+                        Some(instance) => Ok(PolarValue::new_from_instance(instance.to_owned())),
+                        None => Err(CommandError::InvalidConstructorParameter {
                             class: class_name.to_owned(),
                             param_index: i,
                             param_type: pt.clone(),
+                            reason: "unknown instance"
                         })
                     }
-                },*/
-                _ => return Err(CommandError::InvalidConstructorParameter {
-                    class: class_name.to_owned(),
-                    param_index: i,
-                    param_type: pt.clone(),
-                })
-            };
+                }
+            }?;
             params.push(polar_value);
         }
 
         let instance = constructor.invoke(params)
-            .map_err(|e| CommandError::InternalConstructorError {
-                class: class_name.to_owned(),
+            .map_err(|e| CommandError::InternalError {
+                path: CommandRegistry::to_path_str(pwd, cd).unwrap_or_else(|_| pwd.to_owned()),
+                reason: "failed to make instance",
                 error: e,
             })?;
-        self.create_path(pwd, cd, false, Some(instance))
+        self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
-    pub fn make_instance_from_values(
+    fn parse<T: FromStr>(
+        param: &str,
+        class_name: &str,
+        param_index: usize,
+        param_type: &ParamType) -> Result<T, CommandError> {
+        param.parse().map_err(|e| CommandError::InvalidConstructorParameter {
+            class: class_name.to_owned(),
+            param_index,
+            param_type: param_type.clone(),
+            reason: "could not parse from string"
+        })
+    }
+
+    pub fn make_polar_instance(
             &mut self,
             pwd: &str,
             cd: &str,
@@ -340,51 +447,86 @@ impl CommandRegistry {
         }
 
         let instance = constructor.invoke(params)
-            .map_err(|e| CommandError::InternalConstructorError {
-                class: class_name.to_owned(),
+            .map_err(|e| CommandError::InternalError {
+                path: CommandRegistry::to_path_str(pwd, cd).unwrap_or_else(|_| pwd.to_owned()),
+                reason: "failed to make instance",
                 error: e,
             })?;
-        self.create_path(pwd, cd, false, Some(instance))
+        self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
-    pub fn get_instance(&self, pwd: &str) -> Option<&Instance> {
+    pub fn get_object<T: 'static>(&self, pwd: &str) -> Result<&T, CommandError> {
         match self.get_path(pwd) {
-            Ok(path) => path.instance.as_ref(),
-            Err(_) => None
+            Ok(path) => match &path.instance {
+                None => Err(CommandError::NoInstanceAtPath(pwd.to_owned())),
+                Some(instance) => match instance.downcast::<T>(Some(&self.host)) {
+                    Ok(d) => Ok(d),
+                    Err(e) => Err(CommandError::InvalidCast {
+                        path: pwd.to_owned(),
+                        cast_type: "instance cast",
+                        expected: e.expected,
+                        got: e.got,
+                    })
+                }
+            }
+            Err(_) => Err(CommandError::UnknownPath(pwd.to_owned()))
         }
     }
 
-    fn parse<T: FromStr>(
-            param: &str,
-            class_name: &str,
-            param_index: usize,
-            param_type: &ParamType) -> Result<T, CommandError> {
-        param.parse().map_err(|e| CommandError::InvalidConstructorParameter {
-            class: class_name.to_owned(),
-            param_index,
-            param_type: param_type.clone(),
-        })
+    pub fn get_polar_attr(&self, path: &str) -> Result<PolarValue, CommandError> {
+        // path to the attribute
+        let attr_path = self.get_path(path)?;
+        // check that we are an attribute node
+        let attr_name = match &attr_path.attr {
+            Some(name) => name,
+            None => return Err(CommandError::PathIsNotAnAttribute(attr_path.full_path.to_owned()))
+        };
+        // lookup the instance node
+        let instance_path = self.get_path_by_id(attr_path.owner.unwrap())?;
+        // get the attribute
+        let instance = instance_path.instance.as_ref().unwrap();
+        match instance.get_attr(attr_name, &self.host) {
+            Ok(value) => Ok(value),
+            Err(_) => Err(CommandError::PathIsNotAnAttribute(attr_path.full_path.to_owned()))
+        }
+    }
+
+    pub fn get_attr<T: 'static + FromPolar>(&self, path: &str) -> Result<T, CommandError> {
+        let result = self.get_polar_attr(path)?;
+        match T::from_polar(result) {
+            Ok(v) => Ok(v),
+            Err(e) => match e {
+                OsoError::TypeError(e) => Err(CommandError::InvalidCast {
+                    path: path.to_owned(),
+                    cast_type: "attribute",
+                    expected: e.expected,
+                    got: e.got
+                }),
+                _ => Err(CommandError::InternalError {
+                    path: path.to_owned(),
+                    reason: "attribute cast error",
+                    error: OsoError::FromPolar,
+                })
+            }
+        }
     }
 }
 
 pub struct CommandPath {
-    children: Vec<usize>,
     id: usize,
-    instance: Option<Instance>,
     name: String,
     parent: Option<usize>,
-    path: String
+    children: Vec<usize>,
+    full_path: String,
+    instance: Option<Instance>,
+    owner: Option<usize>,
+    attr: Option<String>,
+    method: Option<String>
 }
 
 impl PartialEq for CommandPath {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
-    }
-}
-
-impl CommandPath {
-    pub fn associate_object(&mut self, instance: Instance) {
-        self.instance = Some(instance);
     }
 }
 
@@ -401,7 +543,7 @@ mod path_tests {
 
         let node = registry.mkdir("/foo", "/bar/soo").unwrap();
 
-        assert_eq!("/bar/soo", node.path);
+        assert_eq!("/bar/soo", node.full_path);
     }
 
     #[test]
@@ -411,7 +553,7 @@ mod path_tests {
         let node = registry.mkdir("/", "foo").unwrap();
 
         assert_eq!("foo", node.name);
-        assert_eq!("/foo", node.path);
+        assert_eq!("/foo", node.full_path);
         assert_eq!(0, node.children.len());
         assert_eq!(true, node.instance.is_none());
     }
@@ -429,23 +571,23 @@ mod path_tests {
         let great_grandchild = registry.get_path("/foo/bar/soo").unwrap();
 
         assert_eq!("soo", great_grandchild.name);
-        assert_eq!("/foo/bar/soo", great_grandchild.path);
+        assert_eq!("/foo/bar/soo", great_grandchild.full_path);
         assert_eq!(Some(grandchild.id), great_grandchild.parent);
         assert_eq!(0, great_grandchild.children.len());
         assert_eq!(true, great_grandchild.instance.is_none());
 
         assert_eq!("bar", grandchild.name);
-        assert_eq!("/foo/bar", grandchild.path);
+        assert_eq!("/foo/bar", grandchild.full_path);
         assert_eq!(Some(child.id), grandchild.parent);
         assert_eq!(vec![great_grandchild.id], grandchild.children);
 
         assert_eq!("foo", child.name);
-        assert_eq!("/foo", child.path);
+        assert_eq!("/foo", child.full_path);
         assert_eq!(Some(root.id), child.parent);
         assert_eq!(vec![grandchild.id], child.children);
 
         assert_eq!("", root.name);
-        assert_eq!("/", root.path);
+        assert_eq!("/", root.full_path);
         assert_eq!(None, root.parent);
         assert_eq!(vec![child.id], root.children);
     }
@@ -457,7 +599,7 @@ mod path_tests {
 
         let node = registry.mkdir("/foo/bar", "../soo").unwrap();
 
-        assert_eq!("/foo/soo", node.path);
+        assert_eq!("/foo/soo", node.full_path);
     }
 
     #[test]
@@ -467,7 +609,7 @@ mod path_tests {
 
         let node = registry.mkdir("/foo/bar", "/soo").unwrap();
 
-        assert_eq!("/soo", node.path);
+        assert_eq!("/soo", node.full_path);
     }
 
     #[test]
@@ -477,7 +619,7 @@ mod path_tests {
 
         let node = registry.mkdir("/foo/bar", "./soo").unwrap();
 
-        assert_eq!("/foo/bar/soo", node.path);
+        assert_eq!("/foo/bar/soo", node.full_path);
     }
 
     #[test]
@@ -487,7 +629,7 @@ mod path_tests {
 
         let node = registry.mkdir("/foo/bar", "soo///doo").unwrap();
 
-        assert_eq!("/foo/bar/soo/doo", node.path);
+        assert_eq!("/foo/bar/soo/doo", node.full_path);
     }
 
     #[test]
@@ -497,7 +639,7 @@ mod path_tests {
 
         let grandchild = registry.cd("/foo/bar/soo", "..").unwrap();
 
-        assert_eq!("/foo/bar", grandchild.path);
+        assert_eq!("/foo/bar", grandchild.full_path);
     }
 
     #[test]
@@ -507,7 +649,7 @@ mod path_tests {
 
         let grandchild = registry.cd("/foo/bar/soo", "../../").unwrap();
 
-        assert_eq!("/foo", grandchild.path);
+        assert_eq!("/foo", grandchild.full_path);
     }
 
     #[test]
@@ -517,7 +659,7 @@ mod path_tests {
 
         let grandchild = registry.cd("/foo/bar/soo", "../../../").unwrap();
 
-        assert_eq!("/", grandchild.path);
+        assert_eq!("/", grandchild.full_path);
     }
 
     #[test]
@@ -554,42 +696,10 @@ mod path_tests {
 }
 
 #[cfg(test)]
-mod registration_tests {
-    use crate::core::command::registry::CommandRegistry;
-    use crate::core::command::oso::PolarClass;
-
-    #[derive(PolarClass, Clone, Default)]
-    struct User {
-        pub username: String,
-        #[polar(attribute)]
-        pub user_id: i32
-    }
-
-    impl User {
-        fn new(username: String, user_id: i32) -> User {
-            User { username, user_id }
-        }
-
-        fn add_one(&self, num: i32) -> i32 {
-            num + 1
-        }
-    }
-
-    #[test]
-    fn class_registration() {
-        let mut registry = CommandRegistry::new();
-
-        registry.cache_class(User::get_polar_class_builder()
-            .set_constructor(User::new, vec![])
-            .build());
-    }
-}
-
-#[cfg(test)]
-mod oso_integration_tests {
+mod registry_tests {
     use crate::core::command::oso::{FromPolar, Host, Instance, InvalidCallError, OsoError, ParamType, PolarValue, ToPolar};
     use crate::core::command::oso::PolarClass;
-    use crate::core::command::registry::CommandRegistry;
+    use crate::core::command::registry::{CommandError, CommandRegistry};
 
     #[derive(Clone, PolarClass, Default)]
     struct User {
@@ -640,10 +750,9 @@ mod oso_integration_tests {
     fn make_instance_1_param() {
         let mut registry = create_registry();
 
-        registry.make_instance_from_values("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+        registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
 
-        let instance = registry.get_instance("/foo").unwrap();
-        let user = instance.downcast::<User>(None).unwrap();
+        let user = registry.get_object::<User>("/foo").unwrap();
         assert_eq!(user.username, "jim");
     }
 
@@ -651,26 +760,75 @@ mod oso_integration_tests {
     fn make_instance_2_params() {
         let mut registry = create_registry();
 
-        registry.make_instance_from_values("/foo", ".", "User2", vec![PolarValue::String("jim".to_owned()), PolarValue::Integer(42)]).unwrap();
+        registry.make_polar_instance("/foo", ".", "User2", vec![PolarValue::String("jim".to_owned()), PolarValue::Integer(42)]).unwrap();
 
-        let instance = registry.get_instance("/foo").unwrap();
-        let user = instance.downcast::<User2>(None).unwrap();
+        let user = registry.get_object::<User2>("/foo").unwrap();
         assert_eq!(user.username, "jim");
         assert_eq!(user.user_id, 42);
     }
 
-    /*
+    #[test]
+    fn make_instance_1_param_strings() {
+        let mut registry = create_registry();
+
+        registry.make_instance("/foo", ".", "User", &vec!["jim"]).unwrap();
+
+        let user = registry.get_object::<User2>("/foo").unwrap();
+        assert_eq!(user.username, "jim");
+    }
+
+    #[test]
+    fn make_instance_2_params_strings() {
+        let mut registry = create_registry();
+
+        registry.make_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
+
+        let user = registry.get_object::<User2>("/foo").unwrap();
+        assert_eq!(user.username, "jim");
+        assert_eq!(user.user_id, 42);
+    }
+
+    #[test]
+    fn make_instance_at_already_created_directory() {
+        let mut registry = create_registry();
+        registry.mkdir("/foo", ".");
+
+        registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+
+        let user = registry.get_object::<User2>("/foo").unwrap();
+        assert_eq!(user.username, "jim");
+    }
+
+
+    #[test]
+    fn make_instance_at_same_directory_is_error() {
+        let mut registry = create_registry();
+        registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+
+        let result = registry.make_polar_instance("/foo", ".", "User", vec![PolarValue::String("greco".to_owned())]).err().unwrap();
+
+        match result {
+            CommandError::DuplicatePath { pwd, cd } => {
+                assert_eq!("/foo", pwd);
+                assert_eq!(".", cd);
+            },
+            _ => assert!(false)
+        }
+        let user = registry.get_object::<User2>("/foo").unwrap();
+        assert_eq!(user.username, "jim");
+    }
+
     #[test]
     fn get_attribute() {
         let mut registry = create_registry();
-        registry.make_instance_from_values("foo",  ".", "User2", vec![PolarValue::String("jim".to_owned()), PolarValue::Integer(42)]).unwrap();
-        let instance = registry.get_instance("foo").unwrap();
+        registry.make_instance("foo",  ".", "User2", &vec!["jim", "42"]).unwrap();
 
-        let result = instance.get_attr(&"user_id", &registry).unwrap();
+        let result = registry.get_attr("foo/user_id").unwrap();
 
-        assert_eq!(PolarValue::Integer(42), result);
+        assert_eq!(42, result);
     }
 
+    /*
     #[test]
     fn call_instance_method() {
         let mut host = create_registry();
@@ -681,7 +839,6 @@ mod oso_integration_tests {
 
         assert_eq!(PolarValue::Integer(43), result);
     }
-
      */
 
     #[derive(PolarClass, Clone, Default, PartialEq, Debug)]
@@ -712,12 +869,12 @@ mod oso_integration_tests {
         let foo_class = Foo::get_polar_class_builder()
             .set_constructor(Foo::new, vec![])
             .add_typed_method("add", Foo::add,
-                              vec![ParamType::Integer, ParamType::Integer])
-            .add_typed_method("bar", Foo::bar, vec![])
+                              vec![ParamType::Integer, ParamType::Integer], None)
+            .add_typed_method("bar", Foo::bar, vec![], None)
             .build();
         registry.cache_class(bar_class);
         registry.cache_class(foo_class);
-        registry.make_instance_from_values("foo/bar", ".", "Foo", vec![]).unwrap();
+        registry.make_polar_instance("foo/bar", ".", "Foo", vec![]).unwrap();
         registry
     }
 

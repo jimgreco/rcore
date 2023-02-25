@@ -64,10 +64,10 @@ impl AttributeGetter {
 }
 
 #[derive(Clone)]
-pub struct InstanceMethod(TypeErasedMethod<PolarValue>, Vec<ParamType>);
+pub struct InstanceMethod(TypeErasedMethod<PolarValue>, Vec<ParamType>, Option<String>);
 
 impl InstanceMethod {
-    pub fn new<T, F, Args>(f: F, param_types: Vec<ParamType>) -> Self
+    pub fn new<T, F, Args>(f: F, param_types: Vec<ParamType>, path: Option<String>) -> Self
     where
         Args: FromPolarList,
         F: Method<T, Args>,
@@ -87,7 +87,8 @@ impl InstanceMethod {
                         .and_then(|(receiver, args)| f.invoke(receiver, args).to_polar_result())
                 },
             ),
-            param_types
+            param_types,
+            path
         )
     }
 
@@ -117,7 +118,8 @@ impl InstanceMethod {
                         .map(|results| results.to_polar())
                 },
             ),
-            vec![]
+            vec![],
+            None
         )
     }
 
@@ -143,12 +145,17 @@ impl InstanceMethod {
                         })
                 },
             ),
-            vec![]
+            vec![],
+            None
         )
     }
 
     pub fn param_types(&self) -> &Vec<ParamType> {
         &self.1
+    }
+
+    pub fn path(&self) -> &Option<String> {
+        &self.2
     }
 }
 
