@@ -1,14 +1,14 @@
 //! Wrapper structs for the generic `Function` and `Method` traits
 use std::sync::Arc;
-use crate::core::command::oso::Host;
-use super::{PolarIterator, ToPolar, ToPolarResult, ParamType, Class, Instance, PolarValue, FromPolarList};
+use super::{PolarIterator, ToPolar, ToPolarResult, ParamType, Class, Instance, PolarValue,
+            FromPolarList, Host};
 use super::method::{Function, Method};
 
-fn join<A, B>(left: crate::core::command::oso::Result<A>, right: crate::core::command::oso::Result<B>) -> super::Result<(A, B)> {
+fn join<A, B>(left: crate::command::oso::Result<A>, right: crate::command::oso::Result<B>) -> super::Result<(A, B)> {
     left.and_then(|l| right.map(|r| (l, r)))
 }
 
-type TypeErasedFunction<R> = Arc<dyn Fn(Vec<PolarValue>) -> crate::core::command::oso::Result<R> + Send + Sync>;
+type TypeErasedFunction<R> = Arc<dyn Fn(Vec<PolarValue>) -> crate::command::oso::Result<R> + Send + Sync>;
 type TypeErasedMethod<R> =
     Arc<dyn Fn(&Instance, Vec<PolarValue>, &Host) -> super::Result<R> + Send + Sync>;
 
@@ -28,7 +28,7 @@ impl Constructor {
         param_types)
     }
 
-    pub fn invoke(&self, args: Vec<PolarValue>) -> crate::core::command::oso::Result<Instance> {
+    pub fn invoke(&self, args: Vec<PolarValue>) -> crate::command::oso::Result<Instance> {
         self.0(args)
     }
 
@@ -38,7 +38,7 @@ impl Constructor {
 }
 
 type AttributeGetterMethod =
-    Arc<dyn Fn(&Instance, &Host) -> crate::core::command::oso::Result<PolarValue> + Send + Sync>;
+    Arc<dyn Fn(&Instance, &Host) -> crate::command::oso::Result<PolarValue> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct AttributeGetter(AttributeGetterMethod);
@@ -58,7 +58,7 @@ impl AttributeGetter {
         }))
     }
 
-    pub fn invoke(&self, receiver: &Instance, host: &Host) -> crate::core::command::oso::Result<PolarValue> {
+    pub fn invoke(&self, receiver: &Instance, host: &Host) -> crate::command::oso::Result<PolarValue> {
         self.0(receiver, host)
     }
 }
@@ -128,7 +128,7 @@ impl InstanceMethod {
         receiver: &Instance,
         args: Vec<PolarValue>,
         host: &Host,
-    ) -> crate::core::command::oso::Result<PolarValue> {
+    ) -> crate::command::oso::Result<PolarValue> {
         self.0(receiver, args, host)
     }
 
@@ -174,7 +174,7 @@ impl ClassMethod {
         }))
     }
 
-    pub fn invoke(&self, args: Vec<PolarValue>) -> crate::core::command::oso::Result<PolarValue> {
+    pub fn invoke(&self, args: Vec<PolarValue>) -> crate::command::oso::Result<PolarValue> {
         self.0(args)
     }
 }

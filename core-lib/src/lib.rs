@@ -1,4 +1,4 @@
-pub mod core;
+pub mod command;
 
 #[allow(unused_imports)]
 #[macro_use]

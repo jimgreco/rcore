@@ -37,7 +37,7 @@ pub(crate) struct Command {
 
 impl Command {
     pub(crate) fn new(line_num: i32, command_num: i32, tokens: Vec<String>, text: String)
-            -> Command {
+                      -> Command {
         Command { line_num, command_num, tokens, text }
     }
 }
@@ -399,7 +399,7 @@ impl SimpleContext {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::command::lexer::{Lexer, LexerContext, LexerError, LexerErrorType, SimpleContext};
+    use crate::command::lexer::{Lexer, LexerContext, LexerError, LexerErrorType, SimpleContext};
 
     #[test]
     fn print_debug_command() {

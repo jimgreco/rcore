@@ -1,4 +1,4 @@
-use crate::core::command::lexer::{Lexer, LexerContext, LexerErrorType, SimpleContext};
+use crate::command::lexer::{Lexer, LexerContext, LexerErrorType, SimpleContext};
 
 pub trait ExecutableCommand {
     fn execute(&self, context: &mut dyn LexerContext);

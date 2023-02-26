@@ -92,8 +92,6 @@ pub struct Host {
     /// class name it is registered as
     class_names: HashMap<std::any::TypeId, String>,
 
-    id: u64,
-
     pub accept_expression: bool,
 }
 
@@ -103,13 +101,10 @@ impl Host {
             class_name_to_fq_name: HashMap::new(),
             class_names: HashMap::new(),
             classes: HashMap::new(),
-            accept_expression: false,
-            id: 0
+            accept_expression: false
         };
         let type_class = metaclass();
-        let name = type_class.name.clone();
-        host.cache_class(type_class)
-            .expect("could not register the metaclass");
+        host.cache_class(type_class).expect("could not register the metaclass");
         host
     }
 
@@ -187,8 +182,7 @@ impl Host {
             PolarValue::List(_) => class_tag == "List",
             PolarValue::Integer(_) => class_tag == "Integer",
             PolarValue::Float(_) => class_tag == "Float",
-            PolarValue::String(_) => class_tag == "String",
-            _ => false,
+            PolarValue::String(_) => class_tag == "String"
         };
         Ok(res)
     }

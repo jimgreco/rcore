@@ -7,8 +7,7 @@ use impl_trait_for_tuples::*;
 
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque};
 
-use super::DEFAULT_CLASSES;
-use super::{ClassBuilder, PolarClass, PolarValue};
+use super::{DEFAULT_CLASSES, ClassBuilder, PolarClass, PolarValue};
 
 /// Convert Rust types to Polar types.
 ///
