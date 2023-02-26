@@ -136,15 +136,15 @@ pub fn derive_polar_class_impl(ts: TokenStream) -> TokenStream {
     }
 
     let result = quote! {
-        impl crate::core::command::oso::PolarClass for #type_name {
-            fn get_polar_class_builder() -> crate::core::command::oso::ClassBuilder<#type_name> {
-                crate::core::command::oso::Class::builder()
+        impl crate::command::oso::PolarClass for #type_name {
+            fn get_polar_class_builder() -> crate::command::oso::ClassBuilder<#type_name> {
+                crate::command::oso::Class::builder()
                     .name(#class_name)
                     #(#getters)*
                     #(#constants)*
             }
 
-            fn get_polar_class() -> crate::core::command::oso::Class {
+            fn get_polar_class() -> crate::command::oso::Class {
                 let builder = #type_name::get_polar_class_builder();
                 builder.build()
             }

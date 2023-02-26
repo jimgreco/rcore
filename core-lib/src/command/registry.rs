@@ -1,16 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
-use std::iter::Map;
-use std::rc::Weak;
+use std::fmt::Debug;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
 
 extern crate rand;
 use thiserror::Error;
 
-use crate::core::command::oso::{FromPolar, Host, ToPolar, TypeError};
 use super::oso::{
-    builtins, Class, Instance, InvalidCallError, OsoError, ParamType, PolarValue, PolarClass
+    builtins, Class, Instance, OsoError, ParamType, PolarValue, FromPolar, Host, ToPolar
 };
 
 /// Errors thrown when navigating the command tree.
@@ -185,7 +181,7 @@ impl CommandRegistry {
     /// # Examples
     ///
     /// ```
-    /// use rcore::core::command::CommandRegistry;
+    /// use core::command::CommandRegistry;
     /// let mut registry = CommandRegistry::new();
     /// registry.mkdir("/foo/bar", "soo");
     /// assert_eq!("/foo/bar/soo", registry.path("/foo/bar/soo").unwrap().full_path);
@@ -258,7 +254,7 @@ impl CommandRegistry {
                         Some(name.to_string()),
                         None)?;
                 }
-                for (attr_name, attr) in attributes {
+                for (attr_name, _) in attributes {
                     // TODO: customize attribute path
                     let attr_path = attr_name;
                     self.create_path(
@@ -454,7 +450,7 @@ impl CommandRegistry {
             param_index: usize,
             param_type: &ParamType,
             method: &str) -> Result<T, CommandError> {
-        param.parse().map_err(|e| CommandError::InvalidMethodParameter {
+        param.parse().map_err(|_| CommandError::InvalidMethodParameter {
             class: class_name.to_owned(),
             method: method.to_owned(),
             param_index,
@@ -569,9 +565,9 @@ impl PartialEq for CommandPath {
 #[cfg(test)]
 mod path_tests {
     use std::collections::HashMap;
-    use crate::core::command::registry::CommandError;
+    use crate::command::registry::CommandError;
     use super::CommandRegistry;
-    use crate::core::command::oso::PolarClass;
+    use crate::command::oso::PolarClass;
 
     #[test]
     fn mkdir_absolute_directory() {
@@ -746,9 +742,9 @@ mod path_tests {
 
 #[cfg(test)]
 mod registry_tests {
-    use crate::core::command::oso::{FromPolar, Host, Instance, InvalidCallError, OsoError, ParamType, PolarValue, ToPolar};
-    use crate::core::command::oso::PolarClass;
-    use crate::core::command::registry::{CommandError, CommandRegistry};
+    use crate::command::oso::{FromPolar, Host, Instance, InvalidCallError, OsoError, ParamType, PolarValue, ToPolar};
+    use crate::command::oso::PolarClass;
+    use crate::command::registry::{CommandError, CommandRegistry};
 
     #[derive(Clone, PolarClass, Default)]
     struct User {

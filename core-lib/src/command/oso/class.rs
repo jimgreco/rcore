@@ -4,8 +4,10 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use crate::core::command::oso::Host;
-use super::{FromPolarList, InvalidCallError, OsoError, ParamType, ToPolar, ToPolarResult, PolarValue, PolarIterator, TypeError};
+use super::{
+    FromPolarList, InvalidCallError, OsoError, ParamType, ToPolar, ToPolarResult, PolarValue,
+    PolarIterator, TypeError, Host
+};
 use super::method::{Function, Method};
 use super::class_method::{AttributeGetter, ClassMethod, Constructor, InstanceMethod};
 
@@ -243,7 +245,7 @@ where
 
     /// Add a method for polar method calls like `foo.plus(i32)
     pub fn add_method<F, Args, R>(
-        mut self,
+        self,
         name: &'static str,
         f: F) -> Self
         where
@@ -450,7 +452,7 @@ impl Instance {
 
 #[cfg(test)]
 mod test {
-    use crate::core::command::oso::{Class, Instance};
+    use crate::command::oso::{Class, Instance};
 
     #[test]
     fn test_instance_of() {
