@@ -1,5 +1,4 @@
 use std::collections::hash_map::HashMap;
-use std::fmt::{Display, Formatter};
 
 use super::Instance;
 
@@ -43,26 +42,5 @@ impl PolarValue {
         T: Send + Sync + 'static,
     {
         Self::Instance(Instance::new(instance))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ParamType {
-    Integer,
-    Float,
-    String,
-    Boolean,
-    Instance
-}
-
-impl Display for ParamType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParamType::Integer => f.write_str("Integer"),
-            ParamType::Float => f.write_str("Float"),
-            ParamType::String => f.write_str("String"),
-            ParamType::Boolean => f.write_str("Boolean"),
-            ParamType::Instance => f.write_str("Instance")
-        }
     }
 }
