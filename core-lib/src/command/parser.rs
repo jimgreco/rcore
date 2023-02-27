@@ -1,4 +1,4 @@
-use crate::command::lexer::{Lexer, LexerContext, LexerErrorType, SimpleContext};
+use crate::command::lexer::{Lexer, LexerContext, LexerError, SimpleContext};
 
 pub trait ExecutableCommand {
     fn execute(&self, context: &mut dyn LexerContext);
@@ -26,62 +26,27 @@ impl ExecutableCommand for AssignmentCommand {
     }
 }
 
-#[derive(Debug)]
-#[derive(PartialEq)]
-pub enum ParserErrorType {
-    LexerUnterminatedQuote,
-    LexerInvalidEscapedCharacter,
-    LexerUnknownVariable,
-    LexerInvalidVariableFormat
-}
-
-pub struct ParserError<'a> {
-    error_type: ParserErrorType,
-    line_number: i32,
-    statement_number: i32,
-    line: String,
-    file: &'a str
-}
-
-impl<'a> ParserError<'a> {
-    pub fn new(error_type: ParserErrorType,
-               line_number: i32,
-               statement_number: i32,
-               file: &str) -> ParserError {
-        let mut current_line = 1;
-        let mut start = 0;
-        let mut end = 0;
-
-        for (i, c) in file.chars().enumerate() {
-            if c == '\n' {
-                if current_line == line_number {
-                    end = i + 1;
-                    break;
-                }
-                current_line += 1;
-                if current_line == line_number {
-                    start = i + 1;
-                }
-            }
-        }
-
-        let line: String = file.chars().skip(start).take(end - start).collect();
-        ParserError { error_type, line_number, statement_number, line, file }
-    }
+#[derive(Debug, PartialEq)]
+pub enum ParserError {
+    LexerError(LexerError)
 }
 
 pub struct Parser<'a> {
-    file: &'a str
+    file: &'a str,
+    context: &'a dyn LexerContext,
+    lexer: Lexer<'a>
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(file: &'a mut str) -> Parser {
+    pub fn new(file: &'a str, context: &'a dyn LexerContext) -> Parser {
         Parser {
-            file
+            file,
+            context,
+            lexer: Lexer::new()
         }
     }
 
-    fn validate_variable(&mut self, variable: &str) -> bool {
+    fn validate_variable(&self, variable: &str) -> bool {
         let mut first = true;
 
         for c in variable.chars() {
@@ -98,14 +63,13 @@ impl<'a> Parser<'a> {
 }
 
 impl<'a> Iterator for Parser<'a> {
-    type Item = Result<Box<dyn ExecutableCommand>, ParserError<'a>>;
+    type Item = Result<Box<dyn ExecutableCommand>, ParserError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let context = SimpleContext::new();
-        let statement_parser = Lexer::new(self.file, &context);
+        let lexer = Lexer::new(self.file, self.context);
         let mut statement_number = 1;
 
-        for statement_result in statement_parser {
+        for statement_result in lexer {
             match statement_result {
                 Ok(statement) => {
                     let words = statement.tokens;
@@ -113,8 +77,8 @@ impl<'a> Iterator for Parser<'a> {
                     if AssignmentCommand::is_command(&words) {
                         if !self.validate_variable(&words[0]) {
                             return Some(Err(ParserError::new(
-                                ParserErrorType::LexerUnknownVariable,
-                                statement.line_num,
+                                ParserError::LexerUnknownVariable,
+                                statement.line,
                                 statement_number,
                                 self.file
                             )));
@@ -126,15 +90,15 @@ impl<'a> Iterator for Parser<'a> {
                     statement_number += 1;
                 }
                 Err(statement_error) => {
-                    let command_error_type = match statement_error.error {
-                        LexerErrorType::UnterminatedQuote =>
-                            ParserErrorType::LexerUnterminatedQuote,
-                        LexerErrorType::InvalidEscapedCharacter =>
-                            ParserErrorType::LexerInvalidEscapedCharacter,
-                        LexerErrorType::UnknownVariable =>
-                            ParserErrorType::LexerUnknownVariable,
-                        LexerErrorType::InvalidVariableFormat =>
-                            ParserErrorType::LexerInvalidVariableFormat
+                    let command_error_type = match statement_error.reason {
+                        LexerError::UnterminatedQuote =>
+                            ParserError::LexerUnterminatedQuote,
+                        LexerError::InvalidEscapedCharacterFormat =>
+                            ParserError::LexerInvalidEscapedCharacter,
+                        LexerError::UnknownVariable =>
+                            ParserError::LexerUnknownVariable,
+                        LexerError::InvalidVariableFormat =>
+                            ParserError::LexerInvalidVariableFormat
                     };
 
                     return Some(Err(ParserError::new(
