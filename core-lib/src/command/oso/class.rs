@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use super::{
-    FromPolarList, InvalidCallError, OsoError, ParamType, ToPolar, ToPolarResult, PolarValue,
+    FromPolarList, InvalidCallError, OsoError, ToPolar, ToPolarResult, PolarValue,
     PolarIterator, TypeError, Host
 };
 use super::method::{Function, Method};
@@ -54,8 +54,8 @@ pub struct Class {
     pub attributes: Attributes,
     /// Instance methods on `T` that expect a list of `PolarValue`s, and an instance of `&T`
     pub instance_methods: InstanceMethods,
-        /// Class methods on `T`
-    class_methods: ClassMethods,
+    /// Class methods on `T`
+    pub class_methods: ClassMethods,
 
     /// A function that accepts arguments of this class and compares them for equality.
     /// Limitation: Only works on comparisons of the same type.
@@ -150,7 +150,7 @@ where
     }
 
     /// Create a new class builder with a given constructor.
-    pub fn with_constructor<F, Args>(f: F, param_types: Vec<ParamType>) -> Self
+    pub fn with_constructor<F, Args>(f: F, param_types: Vec<&'static str>) -> Self
     where
         F: Function<Args, Result = T>,
         T: Send + Sync,
@@ -162,7 +162,7 @@ where
     }
 
     /// Set the constructor function to use for polar `new` statements.
-    pub fn set_constructor<F, Args>(mut self, f: F, param_types: Vec<ParamType>) -> Self
+    pub fn set_constructor<F, Args>(mut self, f: F, param_types: Vec<&'static str>) -> Self
     where
         F: Function<Args, Result = T>,
         T: Send + Sync,
@@ -244,7 +244,7 @@ where
     }
 
     /// Add a method for polar method calls like `foo.plus(i32)
-    pub fn add_method<F, Args, R>(
+    pub(crate) fn legacy_add_method<F, Args, R>(
         self,
         name: &'static str,
         f: F) -> Self
@@ -253,16 +253,16 @@ where
             F: Method<T, Args, Result = R>,
             R: ToPolarResult + 'static,
     {
-        self.add_typed_method(name, f, vec![], None)
+        self.add_method(name, f, vec![], None)
     }
 
     /// Add a method for polar method calls like `foo.plus(i32)
-    pub fn add_typed_method<F, Args, R>(
+    pub fn add_method<F, Args, R>(
             mut self,
             name: &'static str,
             f: F,
-            param_types: Vec<ParamType>,
-            path: Option<String>) -> Self
+            param_types: Vec<&'static str>,
+            path: Option<&'static str>) -> Self
         where
             Args: FromPolarList,
             F: Method<T, Args, Result = R>,

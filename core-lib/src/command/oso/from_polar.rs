@@ -45,7 +45,7 @@ macro_rules! polar_to_int {
                 if let PolarValue::Integer(i) = val {
                     <$i>::try_from(i).map_err(|_| super::OsoError::FromPolar)
                 } else {
-                    Err(TypeError::expected("Integer").user())
+                    Err(TypeError::expected("int").user())
                 }
             }
         }
@@ -68,7 +68,7 @@ where
         if let PolarValue::Instance(instance) = val {
             Ok(instance.downcast::<T>(None).map_err(|e| e.user())?.clone())
         } else {
-            Err(TypeError::expected("Instance").user())
+            Err(TypeError::expected("instance").user())
         }
     }
 }
@@ -78,7 +78,7 @@ impl FromPolar for f64 {
         if let PolarValue::Float(f) = val {
             Ok(f)
         } else {
-            Err(TypeError::expected("Float").user())
+            Err(TypeError::expected("float").user())
         }
     }
 }
@@ -88,7 +88,7 @@ impl FromPolar for String {
         if let PolarValue::String(s) = val {
             Ok(s)
         } else {
-            Err(TypeError::expected("String").user())
+            Err(TypeError::expected("string").user())
         }
     }
 }
@@ -98,7 +98,7 @@ impl FromPolar for bool {
         if let PolarValue::Boolean(b) = val {
             Ok(b)
         } else {
-            Err(TypeError::expected("Boolean").user())
+            Err(TypeError::expected("bool").user())
         }
     }
 }
@@ -113,7 +113,7 @@ impl<T: FromPolar> FromPolar for HashMap<String, T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("Map").user())
+            Err(TypeError::expected("dict").user())
         }
     }
 }
@@ -128,7 +128,7 @@ impl<T: FromPolar> FromPolar for BTreeMap<String, T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("Map").user())
+            Err(TypeError::expected("dict").user())
         }
     }
 }
@@ -142,7 +142,7 @@ impl<T: FromPolar> FromPolar for Vec<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }
@@ -156,7 +156,7 @@ impl<T: FromPolar> FromPolar for LinkedList<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }
@@ -170,7 +170,7 @@ impl<T: FromPolar> FromPolar for VecDeque<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }
@@ -184,7 +184,7 @@ impl<T: Eq + Hash + FromPolar> FromPolar for HashSet<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }
@@ -198,7 +198,7 @@ impl<T: Eq + Ord + FromPolar> FromPolar for BTreeSet<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }
@@ -212,7 +212,7 @@ impl<T: Ord + FromPolar> FromPolar for BinaryHeap<T> {
             }
             Ok(result)
         } else {
-            Err(TypeError::expected("List").user())
+            Err(TypeError::expected("list").user())
         }
     }
 }

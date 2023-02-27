@@ -33,7 +33,7 @@ pub use errors::{InvalidCallError, OsoError, Result, TypeError};
 pub use class::{Class, ClassBuilder, Instance};
 pub use from_polar::{FromPolar, FromPolarList};
 pub use to_polar::{ToPolar, ToPolarList, PolarIterator, ToPolarResult};
-pub use value::{PolarValue, ParamType};
+pub use value::{PolarValue};
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -171,18 +171,17 @@ impl Host {
         }
     }
 
-    pub fn isa(&self, value: PolarValue, class_tag: &str) -> Result<bool> {
+    pub fn isa(&self, value: &PolarValue, class_tag: &str) -> Result<bool> {
         let res = match value {
             PolarValue::Instance(instance) => {
                 let class = self.get_class(class_tag)?;
                 instance.instance_of(class)
             }
-            PolarValue::Boolean(_) => class_tag == "Boolean",
-            PolarValue::Map(_) => class_tag == "Dictionary",
-            PolarValue::List(_) => class_tag == "List",
-            PolarValue::Integer(_) => class_tag == "Integer",
-            PolarValue::Float(_) => class_tag == "Float",
-            PolarValue::String(_) => class_tag == "String"
+            PolarValue::Boolean(_) => class_tag == "bool",
+            PolarValue::Integer(_) => class_tag == "int",
+            PolarValue::Float(_) => class_tag == "float",
+            PolarValue::String(_) => class_tag == "string",
+            _ => false
         };
         Ok(res)
     }

@@ -1,6 +1,6 @@
 //! Wrapper structs for the generic `Function` and `Method` traits
 use std::sync::Arc;
-use super::{PolarIterator, ToPolar, ToPolarResult, ParamType, Class, Instance, PolarValue,
+use super::{PolarIterator, ToPolar, ToPolarResult, Class, Instance, PolarValue,
             FromPolarList, Host};
 use super::method::{Function, Method};
 
@@ -13,10 +13,10 @@ type TypeErasedMethod<R> =
     Arc<dyn Fn(&Instance, Vec<PolarValue>, &Host) -> super::Result<R> + Send + Sync>;
 
 #[derive(Clone)]
-pub struct Constructor(TypeErasedFunction<Instance>, Vec<ParamType>);
+pub struct Constructor(TypeErasedFunction<Instance>, Vec<&'static str>);
 
 impl Constructor {
-    pub fn new<Args, F>(f: F, param_types: Vec<ParamType>) -> Self
+    pub fn new<Args, F>(f: F, param_types: Vec<&'static str>) -> Self
     where
         Args: FromPolarList,
         F: Function<Args>,
@@ -32,7 +32,7 @@ impl Constructor {
         self.0(args)
     }
 
-    pub fn param_types(&self) -> &Vec<ParamType> {
+    pub fn get_param_types(&self) -> &Vec<&'static str> {
         &self.1
     }
 }
@@ -64,10 +64,10 @@ impl AttributeGetter {
 }
 
 #[derive(Clone)]
-pub struct InstanceMethod(TypeErasedMethod<PolarValue>, Vec<ParamType>, Option<String>);
+pub struct InstanceMethod(TypeErasedMethod<PolarValue>, Vec<&'static str>, Option<&'static str>);
 
 impl InstanceMethod {
-    pub fn new<T, F, Args>(f: F, param_types: Vec<ParamType>, path: Option<String>) -> Self
+    pub fn new<T, F, Args>(f: F, param_types: Vec<&'static str>, path: Option<&'static str>) -> Self
     where
         Args: FromPolarList,
         F: Method<T, Args>,
@@ -150,11 +150,11 @@ impl InstanceMethod {
         )
     }
 
-    pub fn param_types(&self) -> &Vec<ParamType> {
+    pub fn param_types(&self) -> &Vec<&'static str> {
         &self.1
     }
 
-    pub fn path(&self) -> &Option<String> {
+    pub fn path(&self) -> &Option<&'static str> {
         &self.2
     }
 }
