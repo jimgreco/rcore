@@ -30,6 +30,7 @@ mod class;
 mod class_method;
 
 pub use errors::{InvalidCallError, OsoError, Result, TypeError};
+pub use class_method::{Constructor, InstanceMethod};
 pub use class::{Class, ClassBuilder, Instance};
 pub use from_polar::{FromPolar, FromPolarList};
 pub use to_polar::{ToPolar, ToPolarList, PolarIterator, ToPolarResult};

@@ -6,7 +6,8 @@ extern crate rand;
 use thiserror::Error;
 
 use super::oso::{
-    builtins, Class, Instance, OsoError, PolarValue, FromPolar, Host, ToPolar
+    builtins, Class, Instance, OsoError, PolarValue, FromPolar, Host, ToPolar, Constructor,
+    InstanceMethod
 };
 
 /// Errors thrown when navigating the command tree.
@@ -74,7 +75,12 @@ pub enum CommandError {
         got: String
     },
     #[error("an unhandled error from oso: reason={reason}, error={error}")]
-    InternalError {
+    InvocationFailure {
+        pwd: String,
+        cd: String,
+        class: String,
+        method: String,
+        invocation_type: &'static str,
         reason: &'static str,
         error: OsoError
     }
@@ -124,6 +130,37 @@ impl CommandRegistry {
         });
         reg
     }
+
+    pub fn cache_class(&mut self, class: Class) -> Result<(), CommandError> {
+        let class_name = class.fq_name.to_owned();
+
+        // check to ensure that attributes and instance methods don't conflict
+        let mut name_conflict = HashSet::new();
+        for attr in class.attributes.keys() {
+            if !name_conflict.insert(attr) {
+                return Err(CommandError::ClassChildNameConflict {
+                    class: class_name,
+                    child: attr.to_string(),
+                })
+            }
+        }
+        for method in class.instance_methods.keys() {
+            if !name_conflict.insert(method) {
+                return Err(CommandError::ClassChildNameConflict {
+                    class: class_name,
+                    child: method.to_string(),
+                })
+            }
+        }
+
+        self.host.cache_class(class).map_err(|_| CommandError::DuplicateClass {
+            class: class_name
+        })
+    }
+
+    //
+    // Utility methods
+    //
 
     fn to_path_segments(pwd: &str, cd: &str) -> Result<Vec<String>, CommandError> {
         // this method is inefficient, but the command system isn't designed for the critical path
@@ -178,7 +215,7 @@ impl CommandRegistry {
         }
     }
 
-    pub fn type_of(&self, value: &PolarValue) -> (&str, &str) {
+    fn to_type_strings(&self, value: &PolarValue) -> (&str, &str) {
         match value {
             PolarValue::Instance(instance) => {
                 let clz = instance.class(&self.host).unwrap();
@@ -194,11 +231,11 @@ impl CommandRegistry {
     }
 
     fn parse<T: FromStr>(
-        param: &str,
-        class_name: &str,
-        method_name: &str,
-        param_index: usize,
-        param_type: &'static str) -> Result<T, CommandError> {
+            param: &str,
+            class_name: &str,
+            method_name: &str,
+            param_index: usize,
+            param_type: &'static str) -> Result<T, CommandError> {
         param.parse().map_err(|_| CommandError::InvalidMethodParameter {
             class: class_name.to_owned(),
             method: method_name.to_owned(),
@@ -208,28 +245,34 @@ impl CommandRegistry {
         })
     }
 
-    fn convert<T: 'static + FromPolar>(
+    fn cast<T: 'static + FromPolar>(
             pwd: &str,
             cd: &str,
             cast_type: &'static str,
             result: PolarValue) -> Result<T, CommandError> {
-        match T::from_polar(result) {
-            Ok(value) => Ok(value),
-            Err(e) => match e {
-                OsoError::TypeError(e) => Err(CommandError::InvalidCast {
+        T::from_polar(result).map_err(|e| {
+            match e {
+                OsoError::TypeError(e) => CommandError::InvalidCast {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     cast_type,
                     expected: e.expected,
                     got: e.got.unwrap_or("".to_owned()),
-                }),
-                e => Err(CommandError::InternalError {
-                    reason: "internal casting error",
-                    error: e
-                })
+                },
+                _ => CommandError::InvalidCast {
+                    pwd: pwd.to_owned(),
+                    cd: cd.to_owned(),
+                    cast_type,
+                    expected: "".to_owned(),
+                    got: "".to_owned(),
+                }
             }
-        }
+        })
     }
+
+    //
+    // Create paths
+    //
 
     /// Creates a new directory for the specified working directory and change directory.
     ///
@@ -296,10 +339,7 @@ impl CommandRegistry {
                 let id = path.id;
 
                 for (name, method) in instance_methods {
-                    let command_path = match method.path() {
-                        None => name,
-                        Some(command_path) => command_path
-                    };
+                    let command_path = method.path().unwrap_or(name);
                     self.create_path(
                         &full_path,
                         command_path,
@@ -369,6 +409,10 @@ impl CommandRegistry {
         }
     }
 
+    //
+    // Navigate Paths
+    //
+
     pub fn cd(&self, pwd: &str, cd: &str) -> Result<&CommandPath, CommandError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
 
@@ -400,83 +444,16 @@ impl CommandRegistry {
         self.cd(pwd, ".")
     }
 
-    fn class(&self, class_name: &str) -> Result<&Class, CommandError> {
-        self.host.get_class(class_name).map_err(|e| match e {
-            OsoError::MissingClassError { name } => CommandError::UnknownClass {
-                class: name
-            },
-            _ => CommandError::InternalError {
-                reason: "could not retrieve class",
-                error: e,
-            }
-        })
-    }
-
-    pub fn cache_class(&mut self, class: Class) -> Result<(), CommandError> {
-        let class_name = class.fq_name.to_owned();
-
-        // check to ensure that attributes and instance methods don't conflict
-        let mut name_conflict = HashSet::new();
-        for attr in class.attributes.keys() {
-            if !name_conflict.insert(attr) {
-                return Err(CommandError::ClassChildNameConflict {
-                    class: class_name,
-                    child: attr.to_string(),
-                })
-            }
-        }
-        for method in class.instance_methods.keys() {
-            if !name_conflict.insert(method) {
-                return Err(CommandError::ClassChildNameConflict {
-                    class: class_name,
-                    child: method.to_string(),
-                })
-            }
-        }
-
-        self.host.cache_class(class).map_err(|e| {
-            match e {
-                OsoError::DuplicateClassError { name } => CommandError::DuplicateClass {
-                    class: name
-                },
-                _ => CommandError::InternalError {
-                    reason: "failed to cache class",
-                    error: e
-                }
-            }
-        })
-    }
-
-    pub fn parsed_create_instance(
-            &mut self,
-            pwd: &str,
-            cd: &str,
-            class_name: &str,
-            args: &Vec<&str>) -> Result<(), CommandError> {
-        // get the right constructor
-        let constructor = match &self.class(class_name)?.constructor {
-            Some(c) => c,
-            None => return Err(CommandError::NoConstructor { class: class_name.to_owned() })
-        };
-
-        // parse parameters
-        let params = self.parse_params(
-            class_name, "<constructor>", args, constructor.get_param_types())?;
-
-        let instance = constructor.invoke(params)
-            .map_err(|e| CommandError::InternalError {
-                reason: "failed to create instance",
-                error: e,
-            })?;
-        self.create_path(pwd, cd, false, Some(instance), None, None, None)
-    }
+    //
+    // Utility methods for dealing with constructor and method params
+    //
 
     fn parse_params(
-            &self,
-            class_name: &str,
-            method_name: &str,
-            args: &Vec<&str>,
-            param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, CommandError> {
+        &self,
+        class_name: &str,
+        method_name: &str,
+        args: &Vec<&str>,
+        param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, CommandError> {
         if args.len() != param_types.len() {
             return Err(CommandError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),
@@ -522,50 +499,27 @@ impl CommandRegistry {
         Ok(params)
     }
 
-    pub fn create_instance(
-            &mut self,
-            pwd: &str,
-            cd: &str,
-            class_name: &str,
-            params: Vec<PolarValue>) -> Result<(), CommandError>{
-        // get the right constructor
-        let class = self.class(class_name)?;
-        let constructor = match &class.constructor {
-            Some(c) => c,
-            None => return Err(CommandError::NoConstructor { class: class_name.to_owned() })
-        };
-
-        self.validate_params(&params, class, "<constructor>", &constructor.get_param_types())?;
-
-        let instance = constructor.invoke(params)
-            .map_err(|e| CommandError::InternalError {
-                reason: "failed to make instance",
-                error: e,
-            })?;
-        self.create_path(pwd, cd, false, Some(instance), None, None, None)
-    }
-
     fn validate_params(
             &self,
             params: &Vec<PolarValue>,
-            class: &Class,
-            method: &str,
+            class_name: &str,
+            method_name: &str,
             param_types: &Vec<&'static str>) -> Result<(), CommandError> {
         if params.len() != param_types.len() {
             return Err(CommandError::InvalidNumberOfMethodParameters {
-                class: class.fq_name.to_owned(),
-                method: method.to_owned(),
+                class: class_name.to_owned(),
+                method: method_name.to_owned(),
                 expected: param_types.len(),
                 received: params.len()
             });
         }
         for i in 0..param_types.len() {
-            let (expected1, expected2) = self.type_of(&params[i]);
+            let (expected1, expected2) = self.to_type_strings(&params[i]);
             let pt = param_types[i];
             if pt != expected1 && pt != expected2 {
                 return Err(CommandError::InvalidMethodParameter {
-                    class: class.fq_name.clone(),
-                    method: method.to_owned(),
+                    class: class_name.to_owned(),
+                    method: method_name.to_owned(),
                     param_index: i,
                     param_type: pt,
                     reason: "param is of the wrong type",
@@ -573,6 +527,69 @@ impl CommandRegistry {
             }
         }
         Ok(())
+    }
+
+    //
+    // Class components
+    //
+
+    fn class(&self, class_name: &str) -> Result<&Class, CommandError> {
+        self.host.get_class(class_name).map_err(|_| CommandError::UnknownClass {
+            class: class_name.to_owned()
+        })
+    }
+
+    fn constructor(&self, class_name: &str) -> Result<&Constructor, CommandError> {
+        match &self.class(class_name)?.constructor {
+            Some(c) => Ok(c),
+            None => Err(CommandError::NoConstructor { class: class_name.to_owned() })
+        }
+    }
+
+    //
+    // Create and get instances
+    //
+
+    pub fn create_instance(
+            &mut self,
+            pwd: &str,
+            cd: &str,
+            class_name: &str,
+            params: Vec<PolarValue>) -> Result<(), CommandError>{
+        let param_types = self.constructor(class_name)?.get_param_types();
+        self.validate_params(&params, class_name, "<constructor>", param_types)?;
+        self._create_instance(pwd, cd, class_name, params)
+    }
+
+    pub fn parsed_create_instance(
+            &mut self,
+            pwd: &str,
+            cd: &str,
+            class_name: &str,
+            args: &Vec<&str>) -> Result<(), CommandError> {
+        let param_types = self.constructor(class_name)?.get_param_types();
+        let params = self.parse_params(class_name, "<constructor>", args, param_types)?;
+        self._create_instance(pwd, cd, class_name, params)
+    }
+
+    fn _create_instance(
+            &mut self,
+            pwd: &str,
+            cd: &str,
+            class_name: &str,
+            params: Vec<PolarValue>) -> Result<(), CommandError> {
+        let constructor = self.constructor(class_name)?;
+        let instance = constructor.invoke(params)
+            .map_err(|e| CommandError::InvocationFailure {
+                pwd: pwd.to_owned(),
+                cd: cd.to_owned(),
+                class: class_name.to_owned(),
+                method: "<constructor>".to_owned(),
+                invocation_type: "constructor",
+                reason: "constructor invocation failure",
+                error: e,
+            })?;
+        self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
     pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str) -> Result<&T, CommandError> {
@@ -599,14 +616,15 @@ impl CommandRegistry {
         }
     }
 
+    // Get Attributes
+
     pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
                                               -> Result<T, CommandError> {
         let result = self.attr(pwd, cd)?;
-        Self::convert::<T>(pwd, cd, "attribute", result)
+        Self::cast::<T>(pwd, cd, "attribute", result)
     }
 
     pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, CommandError> {
-        // path to the attribute
         let attr_path = self.cd(pwd, cd)?;
         // check that we are an attribute node
         let attr_name = match &attr_path.attr {
@@ -618,21 +636,31 @@ impl CommandRegistry {
         };
         // lookup the instance node
         let instance_path = self.paths.get(&attr_path.owner.unwrap()).unwrap();
-        // get the attribute
+
         let instance = instance_path.instance.as_ref().unwrap();
-        match instance.get_attr(attr_name, &self.host) {
-            Ok(value) => Ok(value),
-            Err(_) => Err(CommandError::MissingAtPath {
-                path: attr_path.full_path.to_owned(),
-                expected: "attribute",
-            })
-        }
+        instance.get_attr(attr_name, &self.host).map_err(|e| {
+            let class_name = &instance.class(&self.host).unwrap().fq_name;
+
+            CommandError::InvocationFailure {
+                pwd: pwd.to_owned(),
+                cd: cd.to_owned(),
+                class: class_name.to_string(),
+                method: attr_name.to_string(),
+                invocation_type: "attribute",
+                reason: "attribute invocation failure",
+                error: e
+            }
+        })
     }
+
+    //
+    // Invoke methods
+    //
 
     pub fn parsed_invoke_method_value<T: 'static + FromPolar>(
             &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<T, CommandError> {
         let result = self.parsed_invoke_method(pwd, cd, params)?;
-        Self::convert::<T>(pwd, cd, "method", result)
+        Self::cast::<T>(pwd, cd, "method", result)
     }
 
     pub fn parsed_invoke_method(
@@ -653,23 +681,16 @@ impl CommandRegistry {
         let class = instance.class(&self.host).unwrap();
         let instance_method = class.instance_methods.get(method_name).unwrap();
 
-        // parse the params into PolarValues
+        // parse the params into PolarValues and invoke method
         let params = self.parse_params(
             &class.name, method_name, &params,instance_method.param_types())?;
-
-        // invoke the method
-        let value = instance.call(method_name, params, &self.host)
-            .map_err(|e| CommandError::InternalError {
-                reason: "failed to invoke method",
-                error: e,
-            })?;
-        Ok(value)
+        self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
     }
 
     pub fn invoke_method_value<T: 'static + FromPolar>(
             &mut self, pwd: &str, cd: &str, params: Vec<PolarValue>) -> Result<T, CommandError> {
         let result = self.invoke_method(pwd, cd, params)?;
-        Self::convert::<T>(pwd, cd, "method", result)
+        Self::cast::<T>(pwd, cd, "method", result)
     }
 
     pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
@@ -691,15 +712,30 @@ impl CommandRegistry {
         let instance_method = class.instance_methods.get(method_name).unwrap();
 
         // validate params of the instance method
-        self.validate_params(&params, class, method_name, instance_method.param_types())?;
+        self.validate_params(&params, &class.fq_name, method_name, instance_method.param_types())?;
+        self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
+    }
 
-        // invoke the method
-        let value = instance.call(method_name, params, &self.host)
-            .map_err(|e| CommandError::InternalError {
-                reason: "failed to invoke method",
+    fn _invoke_method(
+            &self,
+            pwd: &str,
+            cd: &str,
+            class_name: &str,
+            method_name: &str,
+            instance: &Instance,
+            method: &InstanceMethod,
+            params: Vec<PolarValue>) -> Result<PolarValue, CommandError> {
+        method.invoke(instance, params, &self.host).map_err(|e| {
+            CommandError::InvocationFailure {
+                pwd: pwd.to_owned(),
+                cd: cd.to_owned(),
+                class: class_name.to_owned(),
+                method: method_name.to_owned(),
+                invocation_type: "method",
+                reason: "method invocation failure",
                 error: e,
-            })?;
-        Ok(value)
+            }
+        })
     }
 }
 
