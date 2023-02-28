@@ -1,8 +1,9 @@
+mod commands;
 mod lexer;
-mod registry;
-mod parser;
 mod oso;
+mod parser;
+mod registry;
 
-pub use self::registry::CommandRegistry;
-pub use self::registry::CommandError;
-pub use self::registry::CommandPath;
+pub use self::registry::Path;
+pub use self::registry::Registry;
+pub use self::registry::RegistryError;

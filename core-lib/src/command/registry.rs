@@ -12,7 +12,7 @@ use super::oso::{
 
 /// Errors thrown when navigating the command tree.
 #[derive(Debug, Error)]
-pub enum CommandError {
+pub enum RegistryError {
     #[error("path does not contain an {expected} to retrieve: {path}")]
     MissingAtPath {
         path: String,
@@ -86,14 +86,14 @@ pub enum CommandError {
     }
 }
 
-pub struct CommandRegistry {
+pub struct Registry {
     host: Host,
-    paths: HashMap<usize, CommandPath>,
+    paths: HashMap<usize, Path>,
     root_id: usize
 }
 
 #[derive(Debug)]
-pub struct CommandPath {
+pub struct Path {
     id: usize,
     pub name: String,
     parent: Option<usize>,
@@ -105,19 +105,19 @@ pub struct CommandPath {
     method: Option<&'static str>
 }
 
-impl CommandRegistry {
-    pub fn new() -> CommandRegistry {
+impl Registry {
+    pub fn new() -> Registry {
         let mut host = Host::new();
         for class in builtins::classes() {
             host.cache_class(class).expect("builtins failed");
         }
 
-        let mut reg = CommandRegistry {
+        let mut reg = Registry {
             host,
             paths: HashMap::new(),
             root_id: rand::random()
         };
-        reg.paths.insert(reg.root_id, CommandPath {
+        reg.paths.insert(reg.root_id, Path {
             children: HashMap::new(),
             id: reg.root_id,
             instance: None,
@@ -131,14 +131,14 @@ impl CommandRegistry {
         reg
     }
 
-    pub fn cache_class(&mut self, class: Class) -> Result<(), CommandError> {
+    pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         let class_name = class.fq_name.to_owned();
 
         // check to ensure that attributes and instance methods don't conflict
         let mut name_conflict = HashSet::new();
         for attr in class.attributes.keys() {
             if !name_conflict.insert(attr) {
-                return Err(CommandError::ClassChildNameConflict {
+                return Err(RegistryError::ClassChildNameConflict {
                     class: class_name,
                     child: attr.to_string(),
                 })
@@ -146,14 +146,14 @@ impl CommandRegistry {
         }
         for method in class.instance_methods.keys() {
             if !name_conflict.insert(method) {
-                return Err(CommandError::ClassChildNameConflict {
+                return Err(RegistryError::ClassChildNameConflict {
                     class: class_name,
                     child: method.to_string(),
                 })
             }
         }
 
-        self.host.cache_class(class).map_err(|_| CommandError::DuplicateClass {
+        self.host.cache_class(class).map_err(|_| RegistryError::DuplicateClass {
             class: class_name
         })
     }
@@ -162,14 +162,14 @@ impl CommandRegistry {
     // Utility methods
     //
 
-    fn to_path_segments(pwd: &str, cd: &str) -> Result<Vec<String>, CommandError> {
+    fn to_path_segments(pwd: &str, cd: &str) -> Result<Vec<String>, RegistryError> {
         // this method is inefficient, but the command system isn't designed for the critical path
         let mut segments: Vec<String> = Vec::new();
 
         let mut first = true;
         for segment in pwd.split("/") {
             if first && !segment.is_empty() || segment == "." || segment == ".." {
-                return Err(CommandError::IllegalPathNavigation {
+                return Err(RegistryError::IllegalPathNavigation {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     reason: "invalid path segment name"
@@ -186,7 +186,7 @@ impl CommandRegistry {
                 segments.clear();
             } else if segment == ".." {
                 if segments.pop().is_none() {
-                    return Err(CommandError::IllegalPathNavigation {
+                    return Err(RegistryError::IllegalPathNavigation {
                         pwd: pwd.to_owned(),
                         cd: cd.to_owned(),
                         reason: "navigation beyond root"
@@ -201,8 +201,8 @@ impl CommandRegistry {
         Ok(segments)
     }
 
-    fn to_path_str(pwd: &str, cd: &str) -> Result<String, CommandError> {
-        let segments = CommandRegistry::to_path_segments(pwd, cd)?;
+    fn to_path_str(pwd: &str, cd: &str) -> Result<String, RegistryError> {
+        let segments = Registry::to_path_segments(pwd, cd)?;
         if segments.is_empty() {
             Ok("/".to_owned())
         } else {
@@ -235,8 +235,8 @@ impl CommandRegistry {
             class_name: &str,
             method_name: &str,
             param_index: usize,
-            param_type: &'static str) -> Result<T, CommandError> {
-        param.parse().map_err(|_| CommandError::InvalidMethodParameter {
+            param_type: &'static str) -> Result<T, RegistryError> {
+        param.parse().map_err(|_| RegistryError::InvalidMethodParameter {
             class: class_name.to_owned(),
             method: method_name.to_owned(),
             param_index,
@@ -249,17 +249,17 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             cast_type: &'static str,
-            result: PolarValue) -> Result<T, CommandError> {
+            result: PolarValue) -> Result<T, RegistryError> {
         T::from_polar(result).map_err(|e| {
             match e {
-                OsoError::TypeError(e) => CommandError::InvalidCast {
+                OsoError::TypeError(e) => RegistryError::InvalidCast {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     cast_type,
                     expected: e.expected,
                     got: e.got.unwrap_or("".to_owned()),
                 },
-                _ => CommandError::InvalidCast {
+                _ => RegistryError::InvalidCast {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     cast_type,
@@ -279,12 +279,12 @@ impl CommandRegistry {
     /// # Examples
     ///
     /// ```
-    /// use core::command::CommandRegistry;
-    /// let mut registry = CommandRegistry::new();
+    /// use core::command::Registry;
+    /// let mut registry = Registry::new();
     /// registry.mkdir("/foo/bar", "soo");
     /// assert_eq!("/foo/bar/soo", registry.path("/foo/bar/soo").unwrap().full_path);
     /// ```
-    pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<(), CommandError> {
+    pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<(), RegistryError> {
         self.create_path(pwd, cd, true, None, None, None, None)
     }
 
@@ -296,11 +296,11 @@ impl CommandRegistry {
             instance: Option<Instance>,
             owner: Option<usize>,
             method: Option<&'static str>,
-            attr: Option<&'static str>) -> Result<(), CommandError> {
+            attr: Option<&'static str>) -> Result<(), RegistryError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
         let mut created = false;
 
-        let segments = CommandRegistry::to_path_segments(pwd, cd)?;
+        let segments = Registry::to_path_segments(pwd, cd)?;
         for segment in segments {
             let mut found = false;
 
@@ -371,17 +371,17 @@ impl CommandRegistry {
 
             Ok(())
         } else {
-            Err(CommandError::DuplicatePath {
-                path: CommandRegistry::to_path_str(pwd, cd).unwrap()
+            Err(RegistryError::DuplicatePath {
+                path: Registry::to_path_str(pwd, cd).unwrap()
             })
         }
     }
 
     fn create_child(&mut self, node_id: usize, pwd: String, name: &str)
-            -> Result<usize, CommandError> {
+            -> Result<usize, RegistryError> {
         let parent = self.paths.get_mut(&node_id).unwrap();
         if name.is_empty() || name == "." || name == ".." {
-            Err(CommandError::InvalidPathChildName {
+            Err(RegistryError::InvalidPathChildName {
                 pwd,
                 child: name.to_owned(),
                 reason: "illegal child name"
@@ -389,7 +389,7 @@ impl CommandRegistry {
         } else {
             let path_copy = parent.full_path.clone();
             let child_id = rand::random();
-            let child = CommandPath {
+            let child = Path {
                 children: HashMap::new(),
                 id: child_id,
                 instance: None,
@@ -413,10 +413,10 @@ impl CommandRegistry {
     // Navigate Paths
     //
 
-    pub fn cd(&self, pwd: &str, cd: &str) -> Result<&CommandPath, CommandError> {
+    pub fn cd(&self, pwd: &str, cd: &str) -> Result<&Path, RegistryError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
 
-        let segments = CommandRegistry::to_path_segments(pwd, cd)?;
+        let segments = Registry::to_path_segments(pwd, cd)?;
         for segment in segments {
             let mut found = false;
 
@@ -429,7 +429,7 @@ impl CommandRegistry {
             }
 
             if !found {
-                return Err(CommandError::IllegalPathNavigation {
+                return Err(RegistryError::IllegalPathNavigation {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     reason: "unknown path",
@@ -440,7 +440,7 @@ impl CommandRegistry {
         Ok(pwd_node)
     }
 
-    pub fn path(&self, pwd: &str) -> Result<&CommandPath, CommandError> {
+    pub fn path(&self, pwd: &str) -> Result<&Path, RegistryError> {
         self.cd(pwd, ".")
     }
 
@@ -453,9 +453,9 @@ impl CommandRegistry {
             class_name: &str,
             method_name: &str,
             args: &Vec<&str>,
-            param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, CommandError> {
+            param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, RegistryError> {
         if args.len() != param_types.len() {
-            return Err(CommandError::InvalidNumberOfMethodParameters {
+            return Err(RegistryError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),
                 method: method_name.to_owned(),
                 expected: param_types.len(),
@@ -469,13 +469,13 @@ impl CommandRegistry {
             let pt = param_types[i];
 
             if pt == "bool" {
-                params.push(CommandRegistry::parse::<bool>(
+                params.push(Registry::parse::<bool>(
                     arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "int" {
-                params.push(CommandRegistry::parse::<i32>(
+                params.push(Registry::parse::<i32>(
                     arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "float" {
-                params.push(CommandRegistry::parse::<f64>(
+                params.push(Registry::parse::<f64>(
                     arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "string" {
                 params.push(PolarValue::String(arg.to_owned()));
@@ -485,7 +485,7 @@ impl CommandRegistry {
                 if pt == &class.name || pt == &class.fq_name {
                     params.push(PolarValue::Instance(instance.to_owned()))
                 } else {
-                    return Err(CommandError::InvalidCast {
+                    return Err(RegistryError::InvalidCast {
                         pwd: arg.to_string(),
                         cd: ".".to_string(),
                         cast_type: "",
@@ -504,9 +504,9 @@ impl CommandRegistry {
             params: &Vec<PolarValue>,
             class_name: &str,
             method_name: &str,
-            param_types: &Vec<&'static str>) -> Result<(), CommandError> {
+            param_types: &Vec<&'static str>) -> Result<(), RegistryError> {
         if params.len() != param_types.len() {
-            return Err(CommandError::InvalidNumberOfMethodParameters {
+            return Err(RegistryError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),
                 method: method_name.to_owned(),
                 expected: param_types.len(),
@@ -517,7 +517,7 @@ impl CommandRegistry {
             let (expected1, expected2) = self.to_type_strings(&params[i]);
             let pt = param_types[i];
             if pt != expected1 && pt != expected2 {
-                return Err(CommandError::InvalidMethodParameter {
+                return Err(RegistryError::InvalidMethodParameter {
                     class: class_name.to_owned(),
                     method: method_name.to_owned(),
                     param_index: i,
@@ -533,16 +533,16 @@ impl CommandRegistry {
     // Class components
     //
 
-    fn class(&self, class_name: &str) -> Result<&Class, CommandError> {
-        self.host.get_class(class_name).map_err(|_| CommandError::UnknownClass {
+    fn class(&self, class_name: &str) -> Result<&Class, RegistryError> {
+        self.host.get_class(class_name).map_err(|_| RegistryError::UnknownClass {
             class: class_name.to_owned()
         })
     }
 
-    fn constructor(&self, class_name: &str) -> Result<&Constructor, CommandError> {
+    fn constructor(&self, class_name: &str) -> Result<&Constructor, RegistryError> {
         match &self.class(class_name)?.constructor {
             Some(c) => Ok(c),
-            None => Err(CommandError::NoConstructor { class: class_name.to_owned() })
+            None => Err(RegistryError::NoConstructor { class: class_name.to_owned() })
         }
     }
 
@@ -555,7 +555,7 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             class_name: &str,
-            params: Vec<PolarValue>) -> Result<(), CommandError>{
+            params: Vec<PolarValue>) -> Result<(), RegistryError>{
         let param_types = self.constructor(class_name)?.get_param_types();
         self.validate_params(&params, class_name, "<constructor>", param_types)?;
         self._create_instance(pwd, cd, class_name, params)
@@ -566,7 +566,7 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             class_name: &str,
-            args: &Vec<&str>) -> Result<(), CommandError> {
+            args: &Vec<&str>) -> Result<(), RegistryError> {
         let param_types = self.constructor(class_name)?.get_param_types();
         let params = self.parse_params(class_name, "<constructor>", args, param_types)?;
         self._create_instance(pwd, cd, class_name, params)
@@ -577,10 +577,10 @@ impl CommandRegistry {
             pwd: &str,
             cd: &str,
             class_name: &str,
-            params: Vec<PolarValue>) -> Result<(), CommandError> {
+            params: Vec<PolarValue>) -> Result<(), RegistryError> {
         let constructor = self.constructor(class_name)?;
         let instance = constructor.invoke(params)
-            .map_err(|e| CommandError::InvocationFailure {
+            .map_err(|e| RegistryError::InvocationFailure {
                 pwd: pwd.to_owned(),
                 cd: cd.to_owned(),
                 class: class_name.to_owned(),
@@ -592,11 +592,11 @@ impl CommandRegistry {
         self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
-    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str) -> Result<&T, CommandError> {
+    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str) -> Result<&T, RegistryError> {
         let instance = self.instance(pwd, cd)?;
         match instance.downcast::<T>(Some(&self.host)) {
             Ok(value) => Ok(value),
-            Err(e) => Err(CommandError::InvalidCast {
+            Err(e) => Err(RegistryError::InvalidCast {
                 pwd: pwd.to_owned(),
                 cd: cd.to_owned(),
                 cast_type: "instance cast",
@@ -606,9 +606,9 @@ impl CommandRegistry {
         }
     }
 
-    pub fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, CommandError> {
+    pub fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, RegistryError> {
         return match &self.cd(pwd, cd)?.instance {
-            None => Err(CommandError::MissingAtPath {
+            None => Err(RegistryError::MissingAtPath {
                 path: pwd.to_owned(),
                 expected: "instance"
             }),
@@ -619,17 +619,17 @@ impl CommandRegistry {
     // Get Attributes
 
     pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
-                                              -> Result<T, CommandError> {
+                                              -> Result<T, RegistryError> {
         let result = self.attr(pwd, cd)?;
         Self::cast::<T>(pwd, cd, "attribute", result)
     }
 
-    pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, CommandError> {
+    pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, RegistryError> {
         let attr_path = self.cd(pwd, cd)?;
         // check that we are an attribute node
         let attr_name = match &attr_path.attr {
             Some(name) => name,
-            None => return Err(CommandError::MissingAtPath {
+            None => return Err(RegistryError::MissingAtPath {
                 path: attr_path.full_path.to_owned(),
                 expected: "attribute"
             })
@@ -641,7 +641,7 @@ impl CommandRegistry {
         instance.get_attr(attr_name, &self.host).map_err(|e| {
             let class_name = &instance.class(&self.host).unwrap().fq_name;
 
-            CommandError::InvocationFailure {
+            RegistryError::InvocationFailure {
                 pwd: pwd.to_owned(),
                 cd: cd.to_owned(),
                 class: class_name.to_string(),
@@ -658,18 +658,18 @@ impl CommandRegistry {
     //
 
     pub fn parsed_invoke_method_value<T: 'static + FromPolar>(
-            &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<T, CommandError> {
+            &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<T, RegistryError> {
         let result = self.parsed_invoke_method(pwd, cd, params)?;
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
     pub fn parsed_invoke_method(
-            &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<PolarValue, CommandError> {
+            &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<PolarValue, RegistryError> {
         // check that we are an method node
         let method_path = self.cd(pwd, cd)?;
         let method_name = match method_path.method {
             Some(name) => name,
-            None => return Err(CommandError::MissingAtPath {
+            None => return Err(RegistryError::MissingAtPath {
                 path: method_path.full_path.to_owned(),
                 expected: "method"
             })
@@ -688,18 +688,18 @@ impl CommandRegistry {
     }
 
     pub fn invoke_method_value<T: 'static + FromPolar>(
-            &mut self, pwd: &str, cd: &str, params: Vec<PolarValue>) -> Result<T, CommandError> {
+            &mut self, pwd: &str, cd: &str, params: Vec<PolarValue>) -> Result<T, RegistryError> {
         let result = self.invoke_method(pwd, cd, params)?;
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
     pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
-            -> Result<PolarValue, CommandError>{
+            -> Result<PolarValue, RegistryError>{
         // check that we are an method node
         let method_path = self.cd(pwd, cd)?;
         let method_name = match method_path.method {
             Some(name) => name,
-            None => return Err(CommandError::MissingAtPath {
+            None => return Err(RegistryError::MissingAtPath {
                 path: method_path.full_path.to_owned(),
                 expected: "method"
             })
@@ -724,9 +724,9 @@ impl CommandRegistry {
             method_name: &str,
             instance: &Instance,
             method: &InstanceMethod,
-            params: Vec<PolarValue>) -> Result<PolarValue, CommandError> {
+            params: Vec<PolarValue>) -> Result<PolarValue, RegistryError> {
         method.invoke(instance, params, &self.host).map_err(|e| {
-            CommandError::InvocationFailure {
+            RegistryError::InvocationFailure {
                 pwd: pwd.to_owned(),
                 cd: cd.to_owned(),
                 class: class_name.to_owned(),
@@ -739,7 +739,7 @@ impl CommandRegistry {
     }
 }
 
-impl PartialEq for CommandPath {
+impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -748,12 +748,12 @@ impl PartialEq for CommandPath {
 #[cfg(test)]
 mod path_tests {
     use std::collections::HashMap;
-    use crate::command::registry::CommandError;
-    use super::CommandRegistry;
+    use crate::command::registry::RegistryError;
+    use super::Registry;
 
     #[test]
     fn mkdir_absolute_directory() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/bar/me", "/foo").unwrap();
 
         registry.mkdir("/foo", "/bar/soo").unwrap();
@@ -764,7 +764,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_creates_child_directory() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
 
         registry.mkdir("/", "foo").unwrap();
 
@@ -777,7 +777,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_creates_grandchild_directories() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
 
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
@@ -817,7 +817,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_from_child() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "../soo").unwrap();
@@ -828,7 +828,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_absolute_path_from_child_directory() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "/soo").unwrap();
@@ -839,7 +839,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_current_directory() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "./soo").unwrap();
@@ -850,7 +850,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_empty_directories() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "soo///doo").unwrap();
@@ -861,7 +861,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_parent() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "..").unwrap();
@@ -871,7 +871,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_grandparent() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../").unwrap();
@@ -881,7 +881,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_great_grandparent() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../../").unwrap();
@@ -891,13 +891,13 @@ mod path_tests {
 
     #[test]
     fn cd_beyond_root_is_error() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "../../../..").err().unwrap();
 
         match result {
-            CommandError::IllegalPathNavigation { pwd, cd, .. } => {
+            RegistryError::IllegalPathNavigation { pwd, cd, .. } => {
                 assert_eq!("/foo/bar/soo".to_owned(), pwd);
                 assert_eq!("../../../..".to_owned(), cd);
             },
@@ -907,13 +907,13 @@ mod path_tests {
 
     #[test]
     fn cd_to_unknown_directory_is_error() {
-        let mut registry = CommandRegistry::new();
+        let mut registry = Registry::new();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "doo").err().unwrap();
 
         match result {
-            CommandError::IllegalPathNavigation { pwd, cd, .. } => {
+            RegistryError::IllegalPathNavigation { pwd, cd, .. } => {
                 assert_eq!("/foo/bar/soo".to_owned(), pwd);
                 assert_eq!("doo".to_owned(), cd);
             },
@@ -925,7 +925,7 @@ mod path_tests {
 #[cfg(test)]
 mod registry_tests {
     use crate::command::oso::{PolarClass, PolarValue};
-    use crate::command::registry::{CommandError, CommandRegistry};
+    use crate::command::registry::{RegistryError, Registry};
 
     #[derive(Clone, PolarClass, Default)]
     struct User {
@@ -956,8 +956,8 @@ mod registry_tests {
         }
     }
 
-    fn create_registry() -> CommandRegistry {
-        let mut registry = CommandRegistry::new();
+    fn create_registry() -> Registry {
+        let mut registry = Registry::new();
         registry.cache_class(User::get_polar_class_builder()
                              .set_constructor(User::new, vec!["string"])
                              .build()).unwrap();
@@ -1030,7 +1030,7 @@ mod registry_tests {
         let result = registry.create_instance("/foo", ".", "User", vec![PolarValue::String("greco".to_owned())]).err().unwrap();
 
         match result {
-            CommandError::DuplicatePath { path } => {
+            RegistryError::DuplicatePath { path } => {
                 assert_eq!("/foo", path);
             },
             _ => assert!(false)
@@ -1057,7 +1057,7 @@ mod registry_tests {
         let result = registry.attr_value::<i32>("/foo", ".").err().unwrap();
 
         match result {
-            CommandError::MissingAtPath{ path, .. } => assert_eq!(path, "/foo".to_string()),
+            RegistryError::MissingAtPath{ path, .. } => assert_eq!(path, "/foo".to_string()),
             _ => assert!(false)
         }
     }
@@ -1070,7 +1070,7 @@ mod registry_tests {
         let result = registry.attr_value::<f64>("/foo/user_id", ".").err().unwrap();
 
         match result {
-            CommandError::InvalidCast { pwd, cast_type, expected, .. } => {
+            RegistryError::InvalidCast { pwd, cast_type, expected, .. } => {
                 assert_eq!("/foo/user_id", pwd);
                 assert_eq!("attribute", cast_type);
                 assert_eq!("float", expected);
@@ -1101,7 +1101,7 @@ mod registry_tests {
             "/foo", "add_one", vec![PolarValue::Float(42.0)]).err().unwrap();
 
         match result {
-            CommandError::InvalidMethodParameter { method, .. } => assert_eq!("add_one", method),
+            RegistryError::InvalidMethodParameter { method, .. } => assert_eq!("add_one", method),
             _ => assert!(false)
         }
     }
@@ -1166,8 +1166,8 @@ mod registry_tests {
         }
     }
 
-    fn create_registry2() -> CommandRegistry {
-        let mut registry = CommandRegistry::new();
+    fn create_registry2() -> Registry {
+        let mut registry = Registry::new();
         let bar_class = Bar::get_polar_class_builder()
             .set_constructor(Bar::default, vec![])
             .build();
