@@ -3,73 +3,68 @@ use std::fmt;
 use std::fmt::Formatter;
 use std::str::Chars;
 
-#[derive(Debug)]
-#[derive(PartialEq)]
-pub(crate) enum LexerErrorType {
-    UnterminatedQuote,
-    InvalidEscapedCharacter,
-    UnknownVariable,
-    InvalidVariableFormat
-}
+use thiserror::Error;
 
-#[derive(Debug)]
-#[derive(PartialEq)]
-pub(crate) struct LexerError {
-    pub(crate) line_num: i32,
-    pub(crate) command_num: i32,
-    pub(crate) error: LexerErrorType
-}
-
-impl LexerError {
-    pub(crate) fn new(line_num: i32, command_num: i32, error: LexerErrorType) -> LexerError {
-        LexerError { line_num, command_num, error }
+/// Errors thrown lexing commands from the command file.
+#[derive(Debug, PartialEq, Error)]
+pub enum LexerError {
+    #[error("{line}: the command contains an unterminated quote")]
+    UnterminatedQuote {
+        line: usize
+    },
+    #[error("{line}:{column}: the escaped character is not in quotes")]
+    EscapedCharacterNotInQuotes {
+        line: usize,
+        column: usize,
+    },
+    #[error("{line}:{column}: '{character}' is an invalid escaped character")]
+    InvalidEscapedCharacterFormat {
+        line: usize,
+        column: usize,
+        character: String
+    },
+    #[error("{line}:{column}: {variable} is an unknown variable")]
+    UnknownVariable {
+        line: usize,
+        column: usize,
+        variable: String
+    },
+    #[error("{line}:{column}: the variable is in an unknown format")]
+    InvalidVariableFormat {
+        line: usize,
+        column: usize
     }
 }
 
-#[derive(Debug)]
-#[derive(PartialEq)]
-pub(crate) struct Command {
-    pub(crate) line_num: i32,
-    pub(crate) command_num: i32,
-    pub(crate) tokens: Vec<String>,
-    pub(crate) text: String
+#[derive(Debug, PartialEq, Clone)]
+pub struct TokenGroup {
+    pub line: usize,
+    pub tokens: Vec<String>,
 }
 
-impl Command {
-    pub(crate) fn new(line_num: i32, command_num: i32, tokens: Vec<String>, text: String)
-                      -> Command {
-        Command { line_num, command_num, tokens, text }
-    }
-}
-
-impl fmt::Display for Command {
+impl fmt::Display for TokenGroup {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: ", self.line_num)?;
+        write!(f, "{}: ", self.line)?;
         for token in self.tokens.iter() {
             write!(f, " \"{}\"", token)?;
         }
-        write!(f, " [{}]", self.command_num)
+        write!(f, "")
     }
 }
 
 pub(crate) struct Lexer<'a> {
     commands: Chars<'a>,
     context: &'a dyn LexerContext,
-    line_num: i32,
-    command_num: i32
+    line: usize,
+    column: usize
 }
 
 impl<'a> Lexer<'a> {
     pub(crate) fn new(commands: &'a str, context: &'a dyn LexerContext) -> Lexer<'a> {
-        Lexer {
-            commands: commands.chars(),
-            context,
-            line_num: 1,
-            command_num: 0
-        }
+        Lexer { commands: commands.chars(), context, line: 0, column: 0 }
     }
 
-    fn expand(&mut self, token: &String, in_quotes: bool) -> Result<String, LexerErrorType> {
+    fn expand(&self, token: &str, in_quotes: bool) -> Result<String, LexerError> {
         let mut first_char = true;
         let mut in_replace = false;
         let mut in_replace_first_char = false;
@@ -86,17 +81,17 @@ impl<'a> Lexer<'a> {
                     if in_replace {
                         if in_replace_first_char || has_curly_brackets {
                             // $ at the end of a line or missing the closing curly bracket ${foo}
-                            return Err(LexerErrorType::InvalidVariableFormat);
+                            return Err(self.invalid_var_format());
                         } else if variable.is_empty() {
                             // end of argument
                             match self.context.get_argument(argument) {
-                                None => return Err(LexerErrorType::UnknownVariable),
+                                None => return Err(self.unknown_arg(argument)),
                                 Some(arg) => expanded.push_str(arg)
                             }
                         } else {
                             // end of variable
                             match self.context.get_value(&variable) {
-                                None => return Err(LexerErrorType::UnknownVariable),
+                                None => return Err(self.unknown_var(&variable)),
                                 Some(arg) => expanded.push_str(arg)
                             }
                         }
@@ -111,7 +106,7 @@ impl<'a> Lexer<'a> {
                             // first char decides whether we are in an argument or variable
                             if c == '$' {
                                 if has_curly_brackets {
-                                    return Err(LexerErrorType::InvalidVariableFormat);
+                                    return Err(self.invalid_var_format());
                                 }
 
                                 // double dollar sign is just a dollar sign character
@@ -130,7 +125,7 @@ impl<'a> Lexer<'a> {
                                 // skip over curly bracket, ${foo}
                                 has_curly_brackets = true;
                             } else {
-                                return Err(LexerErrorType::InvalidVariableFormat);
+                                return Err(self.invalid_var_format());
                             }
                         } else {
                             // second+ char
@@ -143,11 +138,11 @@ impl<'a> Lexer<'a> {
                                     argument *= 10;
                                     argument += usize::try_from(c.to_digit(10).unwrap()).unwrap();
                                 } else if !in_quotes && (c.is_alphabetic() || c == '$') {
-                                    return Err(LexerErrorType::InvalidVariableFormat);
+                                    return Err(self.invalid_var_format());
                                 } else {
                                     // finished reading the argument, get the value
                                     match self.context.get_argument(argument) {
-                                        None => return Err(LexerErrorType::UnknownVariable),
+                                        None => return Err(self.unknown_arg(argument)),
                                         Some(arg) => expanded.push_str(arg)
                                     }
                                     argument = 0;
@@ -159,11 +154,11 @@ impl<'a> Lexer<'a> {
                                     // add to variable name
                                     variable.push(c);
                                 } else if !in_quotes && c == '$' {
-                                    return Err(LexerErrorType::InvalidVariableFormat);
+                                    return Err(self.escaped_no_quotes());
                                 } else {
                                     // finished reading the variable, get the value out
                                     match self.context.get_value(&variable) {
-                                        None => return Err(LexerErrorType::UnknownVariable),
+                                        None => return Err(self.unknown_var(&variable)),
                                         Some(arg) => expanded.push_str(arg)
                                     }
                                     variable.clear();
@@ -174,7 +169,7 @@ impl<'a> Lexer<'a> {
                             if did_expansion {
                                 if has_curly_brackets {
                                     if c != '}' {
-                                        return Err(LexerErrorType::InvalidVariableFormat);
+                                        return Err(self.invalid_var_format());
                                     }
                                     in_replace = false;
                                     has_curly_brackets = false;
@@ -191,7 +186,7 @@ impl<'a> Lexer<'a> {
                             in_replace = true;
                             in_replace_first_char = true;
                         } else {
-                            return Err(LexerErrorType::InvalidVariableFormat);
+                            return Err(self.escaped_no_quotes());
                         }
                     } else {
                         // regular character
@@ -203,10 +198,60 @@ impl<'a> Lexer<'a> {
             }
         }
     }
+
+    fn unterminated_quote(&self) -> LexerError {
+        LexerError::UnterminatedQuote {
+            line: self.line
+        }
+    }
+
+    fn invalid_escaped(&self, character: char) -> LexerError {
+        let mut str = "\\".to_owned();
+        str.push(character);
+        LexerError::InvalidEscapedCharacterFormat {
+            line: self.line,
+            column: self.column,
+            character: str,
+        }
+    }
+
+    fn unknown_var(&self, variable: &str) -> LexerError {
+        let mut var = "$".to_owned();
+        var.push_str(variable);
+        LexerError::UnknownVariable {
+            line: self.line,
+            column: self.column,
+            variable: var
+        }
+    }
+
+    fn unknown_arg(&self, argument: usize) -> LexerError {
+        let mut var = "$".to_owned();
+        var.push_str(&argument.to_string());
+        LexerError::UnknownVariable {
+            line: self.line,
+            column: self.column,
+            variable: var
+        }
+    }
+
+    fn invalid_var_format(&self) -> LexerError {
+        LexerError::InvalidVariableFormat {
+            line: self.line,
+            column: self.column
+        }
+    }
+
+    fn escaped_no_quotes(&self) -> LexerError {
+        LexerError::EscapedCharacterNotInQuotes {
+            line: self.line,
+            column: self.column
+        }
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Command, LexerError>;
+    type Item = Result<TokenGroup, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut in_quotes = false;
@@ -214,79 +259,70 @@ impl<'a> Iterator for Lexer<'a> {
         let mut in_backslash = false;
         let mut token = String::new();
         let mut tokens: Vec<String> = Vec::new();
-        let mut lines = 0;
-        let mut text = String::new();
-
-        self.command_num += 1;
+        let mut token_col = 0;
+        self.column = 1;
+        self.line += 1;
 
         loop {
             match self.commands.next() {
                 None => {
                     // end of file
                     if in_quotes {
-                        return Some(Err(LexerError::new(
-                            self.line_num, self.command_num,
-                            LexerErrorType::UnterminatedQuote)));
+                        return Some(Err(self.unterminated_quote()));
                     }
 
                     // add the last token
                     if !token.is_empty() {
-                        match self.expand(&mut token, in_quotes) {
-                            Ok(expanded) => tokens.push(expanded),
-                            Err(e) => return Some(Err(
-                                LexerError::new(self.line_num, self.command_num, e)))
-                        }
+                        tokens.push(match self.expand(&token, in_quotes) {
+                            Ok(v) => v,
+                            Err(e) => return Some(Err(e))
+                        });
                         token.clear();
+                        self.column += token_col;
                     }
 
                     if tokens.len() > 0 {
-                        let command = Command::new(
-                            self.line_num, self.command_num, tokens, text);
-                        self.line_num += lines;
-                        return Some(Ok(command));
+                        let group = TokenGroup { line: self.line, tokens };
+                        return Some(Ok(group));
                     } else {
                         return None;
                     }
                 }
                 Some(c) => {
-                    text.push(c);
+                    token_col += 1;
 
                     if c == '\n' {
                         // end of line
                         if in_quotes {
-                            return Some(Err(LexerError::new(
-                                self.line_num, self.command_num,
-                                LexerErrorType::UnterminatedQuote)));
+                            return Some(Err(self.unterminated_quote()));
                         }
 
                         // add the last token
                         if !token.is_empty() {
-                            match self.expand(&token, in_quotes) {
-                                Ok(expanded) => tokens.push(expanded),
-                                Err(e) => return Some(Err(
-                                    LexerError::new(self.line_num, self.command_num, e)))
-                            }
+                            tokens.push(match self.expand(&token, in_quotes) {
+                                Ok(v) => v,
+                                Err(e) => return Some(Err(e))
+                            });
                             token.clear();
+                            self.column += token_col;
+                            token_col = 0;
                         }
-                        lines += 1;
 
                         // continue to the next line if the last character is a backslash
                         if !in_backslash && tokens.len() > 0 {
-                            let command = Command::new(
-                                self.line_num, self.command_num, tokens, text);
-                            self.line_num += lines;
-                            return Some(Ok(command));
+                            let group = TokenGroup { line: self.line, tokens };
+                            return Some(Ok(group));
                         }
 
+                        self.line += 1;
+                        self.column = 0;
                         in_quotes = false;
                         in_comment = false;
                         in_backslash = false;
                     } else if !in_comment {
                         if in_backslash {
                             if !in_quotes {
-                                return Some(Err(LexerError::new(
-                                    self.line_num, self.command_num,
-                                    LexerErrorType::InvalidEscapedCharacter)));
+                                return Some(Err(self.invalid_escaped(c)));
                             }
 
                             // special characters that are escaped
@@ -297,9 +333,7 @@ impl<'a> Iterator for Lexer<'a> {
                             } else if c == '"' {
                                 token.push('"');
                             } else {
-                                return Some(Err(LexerError::new(
-                                    self.line_num, self.command_num,
-                                    LexerErrorType::InvalidEscapedCharacter)));
+                                return Some(Err(self.invalid_escaped(c)));
                             }
 
                             in_backslash = false;
@@ -310,24 +344,26 @@ impl<'a> Iterator for Lexer<'a> {
                             if in_quotes {
                                 // end quotes
                                 // include zero length tokens
-                                match self.expand(&token, in_quotes) {
-                                    Ok(expanded) => tokens.push(expanded),
-                                    Err(e) => return Some(Err(
-                                        LexerError::new(self.line_num, self.command_num, e)))
-                                }
+                                tokens.push(match self.expand(&token, in_quotes) {
+                                    Ok(v) => v,
+                                    Err(e) => return Some(Err(e))
+                                });
                                 token.clear();
+                                self.column += token_col;
+                                token_col = 0;
                             }
                             in_quotes = !in_quotes
                         } else if c == '#' && !in_quotes {
                             // start of comment
                             // add the last token
                             if !token.is_empty() {
-                                match self.expand(&token, in_quotes) {
-                                    Ok(expanded) => tokens.push(expanded),
-                                    Err(e) => return Some(Err(
-                                        LexerError::new(self.line_num, self.command_num, e)))
-                                }
+                                tokens.push(match self.expand(&token, in_quotes) {
+                                    Ok(v) => v,
+                                    Err(e) => return Some(Err(e))
+                                });
                                 token.clear();
+                                self.column += token_col;
+                                token_col = 0;
                             }
 
                             in_comment = true;
@@ -337,12 +373,13 @@ impl<'a> Iterator for Lexer<'a> {
                                 token.push(c);
                             } else if !token.is_empty() {
                                 // end the current token
-                                match self.expand(&token, in_quotes) {
-                                    Ok(expanded) => tokens.push(expanded),
-                                    Err(e) => return Some(Err(
-                                        LexerError::new(self.line_num, self.command_num, e)))
-                                }
+                                tokens.push(match self.expand(&token, in_quotes) {
+                                    Ok(v) => v,
+                                    Err(e) => return Some(Err(e))
+                                });
                                 token.clear();
+                                self.column += token_col;
+                                token_col = 0;
                             }
                             // otherwise, ignore whitespace
                         } else {
@@ -358,9 +395,11 @@ impl<'a> Iterator for Lexer<'a> {
 
 pub trait LexerContext {
     fn get_argument(&self, position: usize) -> Option<&String>;
-    fn get_value(&self, key: &str) -> Option<&String>;
     fn add_argument(&mut self, value: &str);
-    fn set_value(&mut self, key: &str, value: &str, force: bool);
+    fn clear_arguments(&mut self);
+
+    fn get_value(&self, key: &str) -> Option<&String>;
+    fn set_value(&mut self, key: &str, value: &str, overwrite: bool);
 }
 
 impl LexerContext for SimpleContext {
@@ -368,16 +407,20 @@ impl LexerContext for SimpleContext {
         self.arguments.get(position)
     }
 
-    fn get_value(&self, key: &str) -> Option<&String> {
-        self.variables.get(key)
-    }
-
     fn add_argument(&mut self, value: &str) {
         self.arguments.push(value.to_string());
     }
 
-    fn set_value(&mut self, key: &str, value: &str, force: bool) {
-        if force || !self.variables.contains_key(key) {
+    fn clear_arguments(&mut self) {
+        self.arguments.clear();
+    }
+
+    fn get_value(&self, key: &str) -> Option<&String> {
+        self.variables.get(key)
+    }
+
+    fn set_value(&mut self, key: &str, value: &str, overwrite: bool) {
+        if overwrite || !self.variables.contains_key(key) {
             self.variables.insert(key.to_string(), value.to_string());
         }
     }
@@ -399,7 +442,7 @@ impl SimpleContext {
 
 #[cfg(test)]
 mod tests {
-    use crate::command::lexer::{Lexer, LexerContext, LexerError, LexerErrorType, SimpleContext};
+    use crate::command::lexer::{Lexer, LexerContext, LexerError, SimpleContext};
 
     #[test]
     fn print_debug_command() {
@@ -437,9 +480,9 @@ mod tests {
     fn quotes_not_terminated_at_end_of_file_throws_error() {
         let text = "foo \"bar me";
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap();
+        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::UnterminatedQuote)));
+        assert_eq!(result, LexerError::UnterminatedQuote { line: 1 });
     }
 
     #[test]
@@ -447,18 +490,20 @@ mod tests {
         let text = "foo \"bar me
         hey there";
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap();
+        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::UnterminatedQuote)));
+        assert_eq!(result, LexerError::UnterminatedQuote { line: 1 });
     }
 
     #[test]
     fn invalid_escaped_character_throws_error() {
         let text = "foo \"b\\^br\" me";
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap();
+        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::InvalidEscapedCharacter)));
+        assert_eq!(result, LexerError::InvalidEscapedCharacterFormat {
+            line: 1, column: 5, character: "\\^".to_owned()
+        });
     }
 
     #[test]
@@ -559,9 +604,9 @@ mod tests {
     fn backslash_not_in_quotes_is_error() {
         let text = "back\\\"slash";
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap();
+        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::InvalidEscapedCharacter)));
+        assert_eq!(result, LexerError::InvalidEscapedCharacterFormat { line: 1, column: 1, character: "\\\"".to_owned() });
     }
 
     #[test]
@@ -611,9 +656,9 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let commands = Lexer::new(text, &context).next().unwrap();
+        let commands = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(commands, Err(LexerError::new(1, 1, LexerErrorType::InvalidVariableFormat)));
+        assert_eq!(commands, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
 
     #[test]
@@ -623,9 +668,9 @@ mod tests {
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
-        let commands = Lexer::new(text, &context).next().unwrap();
+        let commands = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(commands, Err(LexerError::new(1, 1, LexerErrorType::InvalidVariableFormat)));
+        assert_eq!(commands, LexerError::InvalidVariableFormat { line: 1, column: 1 });
     }
 
     #[test]
@@ -659,9 +704,11 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let result = Lexer::new(text, &context).next().unwrap();
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::UnknownVariable)));
+        assert_eq!(result, LexerError::UnknownVariable {
+            line: 1, column: 1, variable: "$1".to_owned()
+        });
     }
 
     #[test]
@@ -709,9 +756,9 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", " left his home", true);
 
-        let result = Lexer::new(text, &context).next().unwrap();
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::InvalidVariableFormat)));
+        assert_eq!(result, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
 
     #[test]
@@ -732,9 +779,11 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let result = Lexer::new(text, &context).next().unwrap();
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::UnknownVariable)));
+        assert_eq!(result, LexerError::UnknownVariable {
+            line: 1, column: 1, variable: "$1".to_owned()
+        });
     }
 
     #[test]
@@ -759,9 +808,9 @@ mod tests {
         context.set_value("foo", "Jojo left", true);
         context.set_value("bar", " his home", true);
 
-        let result = Lexer::new(text, &context).next().unwrap();
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::InvalidVariableFormat)));
+        assert_eq!(result, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
 
     #[test]
@@ -795,8 +844,19 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", "Jojo left ", true);
 
-        let result = Lexer::new(text, &context).next().unwrap();
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
-        assert_eq!(result, Err(LexerError::new(1, 1, LexerErrorType::InvalidVariableFormat)));
+        assert_eq!(result, LexerError::InvalidVariableFormat { line: 1, column: 1 });
+    }
+
+    #[test]
+    fn invalid_character_in_first_part_of_variable_is_error() {
+        let text = "$@foo";
+        let mut context = SimpleContext::new();
+        context.set_value("f@oo", "Jojo left ", true);
+
+        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+
+        assert_eq!(result, LexerError::InvalidVariableFormat { line: 1, column: 1 });
     }
 }
