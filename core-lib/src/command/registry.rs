@@ -449,11 +449,11 @@ impl CommandRegistry {
     //
 
     fn parse_params(
-        &self,
-        class_name: &str,
-        method_name: &str,
-        args: &Vec<&str>,
-        param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, CommandError> {
+            &self,
+            class_name: &str,
+            method_name: &str,
+            args: &Vec<&str>,
+            param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, CommandError> {
         if args.len() != param_types.len() {
             return Err(CommandError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),

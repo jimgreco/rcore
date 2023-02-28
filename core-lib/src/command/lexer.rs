@@ -36,10 +36,10 @@ pub enum LexerError {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub(crate) struct Command {
-    pub(crate) line: usize,
-    pub(crate) tokens: Vec<String>,
+#[derive(Debug, PartialEq, Clone)]
+pub struct Command {
+    pub line: usize,
+    pub tokens: Vec<String>,
 }
 
 impl fmt::Display for Command {
@@ -399,7 +399,7 @@ pub trait LexerContext {
     fn clear_arguments(&mut self);
 
     fn get_value(&self, key: &str) -> Option<&String>;
-    fn set_value(&mut self, key: &str, value: &str, force: bool);
+    fn set_value(&mut self, key: &str, value: &str, overwrite: bool);
 }
 
 impl LexerContext for SimpleContext {
@@ -419,8 +419,8 @@ impl LexerContext for SimpleContext {
         self.variables.get(key)
     }
 
-    fn set_value(&mut self, key: &str, value: &str, force: bool) {
-        if force || !self.variables.contains_key(key) {
+    fn set_value(&mut self, key: &str, value: &str, overwrite: bool) {
+        if overwrite || !self.variables.contains_key(key) {
             self.variables.insert(key.to_string(), value.to_string());
         }
     }
