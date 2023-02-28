@@ -1,9 +1,9 @@
 use std::fmt::{Debug, Display, Formatter};
-use crate::command::lexer::{Command, Lexer, LexerContext, LexerError};
+use crate::command::lexer::{TokenGroup, Lexer, LexerContext, LexerError};
 
 pub trait ExecutableCommandSpec {
-    fn validate(&self, command: &Command) -> Result<bool, ParserError>;
-    fn build(&self, command: &mut Command) -> Box<dyn ExecutableCommand>;
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError>;
+    fn build(&self, command: &mut TokenGroup) -> Box<dyn ExecutableCommand>;
 }
 
 pub trait ExecutableCommand: Debug {
@@ -29,11 +29,11 @@ pub struct DefaultAssignmentCommand {
 }
 
 impl ExecutableCommandSpec for AssignmentCommandSpec {
-    fn validate(&self, command: &Command) -> Result<bool, ParserError> {
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
         validate_assigment(command, "=")
     }
 
-    fn build(&self, command: &mut Command) -> Box<dyn ExecutableCommand> {
+    fn build(&self, command: &mut TokenGroup) -> Box<dyn ExecutableCommand> {
         Box::new(AssignmentCommand {
             value: command.tokens.remove(2),
             variable: command.tokens.remove(0),
@@ -56,11 +56,11 @@ impl Display for AssignmentCommand {
 }
 
 impl ExecutableCommandSpec for DefaultAssignmentCommandSpec {
-    fn validate(&self, command: &Command) -> Result<bool, ParserError> {
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
         validate_assigment(command, ":=")
     }
 
-    fn build(&self, command: &mut Command) -> Box<dyn ExecutableCommand> {
+    fn build(&self, command: &mut TokenGroup) -> Box<dyn ExecutableCommand> {
         Box::new(DefaultAssignmentCommand {
             value: command.tokens.remove(2),
             variable: command.tokens.remove(0),
@@ -97,7 +97,7 @@ fn validate_variable(variable: &str) -> bool {
     return true;
 }
 
-fn validate_assigment(command: &Command, sign: &'static str)
+fn validate_assigment(command: &TokenGroup, sign: &'static str)
                       -> Result<bool, ParserError> {
     let tokens = &command.tokens;
     if tokens.len() == 3 && tokens[1] == sign {
@@ -118,10 +118,10 @@ fn validate_assigment(command: &Command, sign: &'static str)
 pub enum ParserError {
     LexerError(LexerError),
     InvalidVariableName {
-        command: Command,
+        command: TokenGroup,
         variable: String
     },
-    InvalidCommand(Command)
+    InvalidCommand(TokenGroup)
 }
 
 pub struct Parser<'a> {
@@ -191,14 +191,14 @@ impl<'a> Iterator for Parser<'a> {
 
 #[cfg(test)]
 mod assignment_tests {
-    use crate::command::lexer::Command;
+    use crate::command::lexer::TokenGroup;
     use crate::command::parser::{AssignmentCommandSpec, ExecutableCommandSpec, ParserError};
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
         let spec = AssignmentCommandSpec::default();
 
-        let result = spec.validate(&Command {
+        let result = spec.validate(&TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
         }).unwrap();
@@ -210,7 +210,7 @@ mod assignment_tests {
     fn validate_invalid_assignment_command_returns_false() {
         let spec = AssignmentCommandSpec::default();
 
-        let result = spec.validate(&Command {
+        let result = spec.validate(&TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
         }).unwrap();
@@ -221,7 +221,7 @@ mod assignment_tests {
     #[test]
     fn validate_invalid_variable_name_returns_error() {
         let spec = AssignmentCommandSpec::default();
-        let command = Command {
+        let command = TokenGroup {
             line: 0,
             tokens: vec!["12foo".to_owned(), "=".to_owned(), "bar".to_owned()],
         };
@@ -234,14 +234,14 @@ mod assignment_tests {
 
 #[cfg(test)]
 mod default_assignment_tests {
-    use crate::command::lexer::Command;
+    use crate::command::lexer::TokenGroup;
     use crate::command::parser::{DefaultAssignmentCommandSpec, ExecutableCommandSpec, ParserError};
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
         let spec = DefaultAssignmentCommandSpec::default();
 
-        let result = spec.validate(&Command {
+        let result = spec.validate(&TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
         }).unwrap();
@@ -253,7 +253,7 @@ mod default_assignment_tests {
     fn validate_invalid_assignment_command_returns_false() {
         let spec = DefaultAssignmentCommandSpec::default();
 
-        let result = spec.validate(&Command {
+        let result = spec.validate(&TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
         }).unwrap();
@@ -264,7 +264,7 @@ mod default_assignment_tests {
     #[test]
     fn validate_invalid_variable_name_returns_error() {
         let spec = DefaultAssignmentCommandSpec::default();
-        let command = Command {
+        let command = TokenGroup {
             line: 0,
             tokens: vec!["12foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
         };
@@ -277,7 +277,7 @@ mod default_assignment_tests {
 
 #[cfg(test)]
 mod parser_tests {
-    use crate::command::lexer::{Command, SimpleContext, LexerError, LexerContext};
+    use crate::command::lexer::{TokenGroup, SimpleContext, LexerError, LexerContext};
     use crate::command::parser::{AssignmentCommand, DefaultAssignmentCommand, ExecutableCommand, ExecutableCommandSpec, Parser, ParserError, validate_variable};
 
     #[test]
@@ -329,7 +329,7 @@ mod parser_tests {
             ", &context);
         parser.next();
 
-        assert_eq!(ParserError::InvalidCommand(Command {
+        assert_eq!(ParserError::InvalidCommand(TokenGroup {
             line: 2,
             tokens: vec!["foo".to_owned(), "/=".to_owned(), "soo".to_owned()],
         }), parser.next().unwrap().err().unwrap());
@@ -347,7 +347,7 @@ mod parser_tests {
         parser.next();
 
         assert_eq!(ParserError::InvalidVariableName {
-            command: Command {
+            command: TokenGroup {
                 line: 2,
                 tokens: vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]
             },
@@ -365,7 +365,7 @@ mod parser_tests {
     }
 
     impl ExecutableCommandSpec for RemoveVariableCommandSpec {
-        fn validate(&self, command: &Command) -> Result<bool, ParserError> {
+        fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
             if command.tokens.len() == 1 {
                 let mut chars = command.tokens[0].chars();
                 return match chars.nth(0) {
@@ -379,7 +379,7 @@ mod parser_tests {
             Ok(false)
         }
 
-        fn build(&self, command: &mut Command) -> Box<dyn ExecutableCommand> {
+        fn build(&self, command: &mut TokenGroup) -> Box<dyn ExecutableCommand> {
             Box::new(RemoveVariableCommand {
                 variable: command.tokens[0].chars().skip(1).collect()
             })

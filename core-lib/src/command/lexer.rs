@@ -37,12 +37,12 @@ pub enum LexerError {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Command {
+pub struct TokenGroup {
     pub line: usize,
     pub tokens: Vec<String>,
 }
 
-impl fmt::Display for Command {
+impl fmt::Display for TokenGroup {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}: ", self.line)?;
         for token in self.tokens.iter() {
@@ -251,7 +251,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Command, LexerError>;
+    type Item = Result<TokenGroup, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut in_quotes = false;
@@ -282,8 +282,8 @@ impl<'a> Iterator for Lexer<'a> {
                     }
 
                     if tokens.len() > 0 {
-                        let command = Command { line: self.line, tokens };
-                        return Some(Ok(command));
+                        let group = TokenGroup { line: self.line, tokens };
+                        return Some(Ok(group));
                     } else {
                         return None;
                     }
@@ -310,8 +310,8 @@ impl<'a> Iterator for Lexer<'a> {
 
                         // continue to the next line if the last character is a backslash
                         if !in_backslash && tokens.len() > 0 {
-                            let command = Command { line: self.line, tokens };
-                            return Some(Ok(command));
+                            let group = TokenGroup { line: self.line, tokens };
+                            return Some(Ok(group));
                         }
 
                         self.line += 1;
