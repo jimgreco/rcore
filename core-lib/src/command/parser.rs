@@ -9,7 +9,7 @@ pub enum ParserError {
         command: TokenGroup,
         variable: String
     },
-    InvalidCommand(TokenGroup)
+    UnknownCommand(TokenGroup)
 }
 
 pub struct Parser<'a> {
@@ -21,11 +21,11 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(file: &'a str, context: &'a dyn LexerContext) -> Parser<'a> {
+    pub fn new(commands_file: &'a str, context: &'a dyn LexerContext) -> Parser<'a> {
         let mut parser = Parser {
-            file,
+            file: commands_file,
             context,
-            lexer: Lexer::new(file, context),
+            lexer: Lexer::new(commands_file, context),
             command_specs: Vec::new(),
             error: false
         };
@@ -64,7 +64,7 @@ impl<'a> Iterator for Parser<'a> {
                         }
 
                         self.error = true;
-                        return Some(Err(ParserError::InvalidCommand(token_group)))
+                        return Some(Err(ParserError::UnknownCommand(token_group)))
                     }
                     Err(e) => {
                         self.error = true;
@@ -132,7 +132,7 @@ mod tests {
             ", &context);
         parser.next();
 
-        assert_eq!(ParserError::InvalidCommand(TokenGroup {
+        assert_eq!(ParserError::UnknownCommand(TokenGroup {
             line: 2,
             tokens: vec!["foo".to_owned(), "/=".to_owned(), "soo".to_owned()],
         }), parser.next().unwrap().err().unwrap());
@@ -190,7 +190,7 @@ mod tests {
     }
 
     impl ExecutableCommand for RemoveVariableCommand {
-        fn execute(&self, context: &mut dyn LexerContext) {
+        fn execute(&self, context: &mut dyn ShellError) {
             // do nothing
         }
     }

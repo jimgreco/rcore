@@ -396,10 +396,9 @@ impl<'a> Iterator for Lexer<'a> {
 pub trait LexerContext {
     fn get_argument(&self, position: usize) -> Option<&String>;
     fn add_argument(&mut self, value: &str);
-    fn clear_arguments(&mut self);
-
     fn get_value(&self, key: &str) -> Option<&String>;
-    fn set_value(&mut self, key: &str, value: &str, overwrite: bool);
+    fn set_value(&mut self, key: &str, value: &str);
+    fn set_default_value(&mut self, key: &str, value: &str);
 }
 
 impl LexerContext for SimpleContext {
@@ -411,16 +410,16 @@ impl LexerContext for SimpleContext {
         self.arguments.push(value.to_string());
     }
 
-    fn clear_arguments(&mut self) {
-        self.arguments.clear();
-    }
-
     fn get_value(&self, key: &str) -> Option<&String> {
         self.variables.get(key)
     }
 
-    fn set_value(&mut self, key: &str, value: &str, overwrite: bool) {
-        if overwrite || !self.variables.contains_key(key) {
+    fn set_value(&mut self, key: &str, value: &str) {
+        self.variables.insert(key.to_string(), value.to_string());
+    }
+
+    fn set_default_value(&mut self, key: &str, value: &str) {
+        if !self.variables.contains_key(key) {
             self.variables.insert(key.to_string(), value.to_string());
         }
     }
@@ -455,7 +454,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument("testing123");
         context.add_argument("testing456");
-        context.set_value("wtf", "foo", true);
+        context.set_value("wtf", "foo");
 
         let result = Lexer::new(text, &context);
 
@@ -742,7 +741,7 @@ mod tests {
     fn one_variable() {
         let text = "$foo";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo left his home", true);
+        context.set_value("foo", "Jojo left his home");
 
         let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
             |r| r.unwrap().tokens).collect();
@@ -754,7 +753,7 @@ mod tests {
     fn variable_outside_quotes_is_error() {
         let text = "Jojo$foo";
         let mut context = SimpleContext::new();
-        context.set_value("foo", " left his home", true);
+        context.set_value("foo", " left his home");
 
         let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
@@ -765,7 +764,7 @@ mod tests {
     fn variable_can_be_anywhere_in_string_when_inside_quotes() {
         let text = "\"Jojo$foo\"";
         let mut context = SimpleContext::new();
-        context.set_value("foo", " left his home", true);
+        context.set_value("foo", " left his home");
 
         let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
             |r| r.unwrap().tokens).collect();
@@ -790,9 +789,9 @@ mod tests {
     fn multiple_variables() {
         let text = "\"$foo $bar\" $me";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo", true);
-        context.set_value("bar", "left", true);
-        context.set_value("me", "his home", true);
+        context.set_value("foo", "Jojo");
+        context.set_value("bar", "left");
+        context.set_value("me", "his home");
 
         let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
             |r| r.unwrap().tokens).collect();
@@ -805,8 +804,8 @@ mod tests {
     fn multiple_variables_not_in_quotes_is_an_error() {
         let text = "$foo$bar";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo left", true);
-        context.set_value("bar", " his home", true);
+        context.set_value("foo", "Jojo left");
+        context.set_value("bar", " his home");
 
         let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
@@ -817,8 +816,8 @@ mod tests {
     fn multiple_variables_inside_quotes() {
         let text = "\"$foo$bar\"";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo left", true);
-        context.set_value("bar", " his home", true);
+        context.set_value("foo", "Jojo left");
+        context.set_value("bar", " his home");
 
         let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
             |r| r.unwrap().tokens).collect();
@@ -830,7 +829,7 @@ mod tests {
     fn curly_brackets_can_be_used_to_separate_variables_from_text() {
         let text = "\"${foo}his home\"";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo left ", true);
+        context.set_value("foo", "Jojo left ");
 
         let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
             |r| r.unwrap().tokens).collect();
@@ -842,7 +841,7 @@ mod tests {
     fn unterminated_curly_bracket_is_error() {
         let text = "${foo";
         let mut context = SimpleContext::new();
-        context.set_value("foo", "Jojo left ", true);
+        context.set_value("foo", "Jojo left ");
 
         let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 
@@ -853,7 +852,7 @@ mod tests {
     fn invalid_character_in_first_part_of_variable_is_error() {
         let text = "$@foo";
         let mut context = SimpleContext::new();
-        context.set_value("f@oo", "Jojo left ", true);
+        context.set_value("f@oo", "Jojo left ");
 
         let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
 

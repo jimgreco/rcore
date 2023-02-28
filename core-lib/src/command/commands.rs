@@ -1,6 +1,8 @@
+use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use crate::command::lexer::{LexerContext, TokenGroup};
 use crate::command::parser::ParserError;
+use crate::command::shell::ShellError;
 
 pub trait ExecutableCommandSpec {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError>;
@@ -8,7 +10,7 @@ pub trait ExecutableCommandSpec {
 }
 
 pub trait ExecutableCommand: Debug {
-    fn execute(&self, context: &mut dyn LexerContext);
+    fn execute(&self, context: &mut dyn LexerContext) -> Result<Option<Box<dyn Any>>, ShellError>;
 }
 
 #[derive(Default)]
@@ -43,8 +45,9 @@ impl ExecutableCommandSpec for AssignmentCommandSpec {
 }
 
 impl ExecutableCommand for AssignmentCommand {
-    fn execute(&self, context: &mut dyn LexerContext) {
-        context.set_value(&self.variable, &self.value, true);
+    fn execute(&self, context: &mut dyn LexerContext) -> Result<Option<Box<dyn Any>>, ShellError> {
+        context.set_value(&self.variable, &self.value);
+        Ok(None)
     }
 }
 
@@ -70,8 +73,9 @@ impl ExecutableCommandSpec for DefaultAssignmentCommandSpec {
 }
 
 impl ExecutableCommand for DefaultAssignmentCommand {
-    fn execute(&self, context: &mut dyn LexerContext) {
-        context.set_value(&self.variable, &self.value, false);
+    fn execute(&self, context: &mut dyn LexerContext) -> Result<Option<Box<dyn Any>>, ShellError> {
+        context.set_default_value(&self.variable, &self.value);
+        Ok(None)
     }
 }
 
