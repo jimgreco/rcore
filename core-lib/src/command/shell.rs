@@ -62,9 +62,10 @@ impl ShellContext {
 
 impl Shell {
     fn execute(commands_file: &str, context: &mut ShellContext) -> Result<(), ShellError> {
-        let mut parser = Parser::new(commands_file);
+        let mut parser = Parser::new();
         loop {
-            match parser.next(context) {
+            let mut text = commands_file.chars();
+            match parser.next(&mut text, context) {
                 Some(res) => {
                     match res {
                         Ok(command) => {
