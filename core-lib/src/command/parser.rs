@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug};
 use std::str::Chars;
 use crate::command::commands::{AssignmentCommandSpec, DefaultAssignmentCommandSpec, ExecutableCommand, ExecutableCommandSpec};
 use crate::command::lexer::{Lexer, LexerContext, LexerError, TokenGroup};
@@ -189,8 +189,8 @@ mod tests {
     }
 
     impl ExecutableCommand for RemoveVariableCommand {
-        fn execute(&self, context: &mut dyn LexerContext)
-                -> Result<Option<Box<dyn Any>>, ShellError> {
+        fn execute(&self, _context: &mut dyn LexerContext)
+                   -> Result<Option<Box<dyn Any>>, ShellError> {
             Ok(None)
         }
     }
