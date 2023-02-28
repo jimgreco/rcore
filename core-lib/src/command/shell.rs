@@ -11,8 +11,19 @@ pub enum ShellError {
 
 #[derive(Default)]
 pub struct ShellContext {
+    pwd: String,
     variables: HashMap<String, String>,
     arguments: Vec<String>,
+}
+
+impl ShellContext {
+    fn new() -> ShellContext {
+        ShellContext {
+            pwd: "/".to_owned(),
+            variables: Default::default(),
+            arguments: vec![],
+        }
+    }
 }
 
 #[derive(Default)]
@@ -50,10 +61,10 @@ impl ShellContext {
 }
 
 impl Shell {
-    fn load(commands_file: &str, context: &mut ShellContext) -> Result<(), ShellError> {
-        let mut parser = Parser::new(commands_file, context);
+    fn execute(commands_file: &str, context: &mut ShellContext) -> Result<(), ShellError> {
+        let mut parser = Parser::new(commands_file);
         loop {
-            match parser.next() {
+            match parser.next(context) {
                 Some(res) => {
                     match res {
                         Ok(command) => {

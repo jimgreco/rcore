@@ -14,18 +14,16 @@ pub enum ParserError {
 
 pub struct Parser<'a> {
     file: &'a str,
-    context: &'a dyn LexerContext,
     lexer: Lexer<'a>,
     command_specs: Vec<Box<dyn ExecutableCommandSpec>>,
     error: bool
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(commands_file: &'a str, context: &'a dyn LexerContext) -> Parser<'a> {
+    pub fn new(commands_file: &'a str) -> Parser<'a> {
         let mut parser = Parser {
             file: commands_file,
-            context,
-            lexer: Lexer::new(commands_file, context),
+            lexer: Lexer::new(commands_file),
             command_specs: Vec::new(),
             error: false
         };
@@ -37,17 +35,15 @@ impl<'a> Parser<'a> {
     pub fn add_command(&mut self, spec: Box<dyn ExecutableCommandSpec>) {
         self.command_specs.push(spec);
     }
-}
 
-impl<'a> Iterator for Parser<'a> {
-    type Item = Result<Box<dyn ExecutableCommand>, ParserError>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next(&mut self, context: &dyn LexerContext)
+            -> Option<Result<Box<dyn ExecutableCommand>, ParserError>> {
         if self.error {
-            return None
+            return None;
         }
 
-        match self.lexer.next() {
+        match self.lexer.next(context) {
             Some(result) => {
                 match result {
                     Ok(mut token_group) => {
@@ -79,9 +75,11 @@ impl<'a> Iterator for Parser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
     use crate::command::commands::{AssignmentCommand, DefaultAssignmentCommand, ExecutableCommand, ExecutableCommandSpec, validate_variable};
     use crate::command::lexer::{LexerContext, LexerError, SimpleContext, TokenGroup};
     use crate::command::parser::{Parser, ParserError};
+    use crate::command::shell::ShellError;
 
     #[test]
     fn command_iteration() {
@@ -90,21 +88,24 @@ mod tests {
             "foo = bar
             foo := soo
             do12 = goo
-            ", &context);
+            ");
 
-        assert_eq!(format!("{:?}", parser.next().unwrap().unwrap()), format!("{:?}", AssignmentCommand {
-            variable: "foo".to_owned(),
-            value: "bar".to_owned(),
-        }));
-        assert_eq!(format!("{:?}", parser.next().unwrap().unwrap()), format!("{:?}", DefaultAssignmentCommand {
-            variable: "foo".to_owned(),
-            value: "soo".to_owned(),
-        }));
-        assert_eq!(format!("{:?}", parser.next().unwrap().unwrap()), format!("{:?}", AssignmentCommand {
-            variable: "do12".to_owned(),
-            value: "goo".to_owned(),
-        }));
-        assert!(parser.next().is_none());
+        assert_eq!(format!("{:?}", parser.next(&context).unwrap().unwrap()),
+                   format!("{:?}", AssignmentCommand {
+                       variable: "foo".to_owned(),
+                       value: "bar".to_owned(),
+                   }));
+        assert_eq!(format!("{:?}", parser.next(&context).unwrap().unwrap()),
+                   format!("{:?}", DefaultAssignmentCommand {
+                       variable: "foo".to_owned(),
+                       value: "soo".to_owned(),
+                   }));
+        assert_eq!(format!("{:?}", parser.next(&context).unwrap().unwrap()),
+                   format!("{:?}", AssignmentCommand {
+                       variable: "do12".to_owned(),
+                       value: "goo".to_owned(),
+                   }));
+        assert!(parser.next(&context).is_none());
     }
 
     #[test]
@@ -114,12 +115,12 @@ mod tests {
             "foo = bar
             fo\"o = soo
             do12 = goo
-            ", &context);
-        parser.next();
+            ");
+        parser.next(&context);
 
         assert_eq!(ParserError::LexerError(LexerError::UnterminatedQuote { line: 2 }),
-                   parser.next().unwrap().err().unwrap());
-        assert!(parser.next().is_none());
+                   parser.next(&context).unwrap().err().unwrap());
+        assert!(parser.next(&context).is_none());
     }
 
     #[test]
@@ -129,14 +130,14 @@ mod tests {
             "foo = bar
             foo /= soo
             do12 = goo
-            ", &context);
-        parser.next();
+            ");
+        parser.next(&context);
 
         assert_eq!(ParserError::UnknownCommand(TokenGroup {
             line: 2,
             tokens: vec!["foo".to_owned(), "/=".to_owned(), "soo".to_owned()],
-        }), parser.next().unwrap().err().unwrap());
-        assert!(parser.next().is_none());
+        }), parser.next(&context).unwrap().err().unwrap());
+        assert!(parser.next(&context).is_none());
     }
 
     #[test]
@@ -146,8 +147,8 @@ mod tests {
             "foo = bar
             12foo = soo
             do12 = goo
-            ", &context);
-        parser.next();
+            ");
+        parser.next(&context);
 
         assert_eq!(ParserError::InvalidVariableName {
             command: TokenGroup {
@@ -155,8 +156,8 @@ mod tests {
                 tokens: vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]
             },
             variable: "12foo".to_string(),
-        }, parser.next().unwrap().err().unwrap());
-        assert!(parser.next().is_none());
+        }, parser.next(&context).unwrap().err().unwrap());
+        assert!(parser.next(&context).is_none());
     }
 
     #[derive(Default)]
@@ -190,8 +191,9 @@ mod tests {
     }
 
     impl ExecutableCommand for RemoveVariableCommand {
-        fn execute(&self, context: &mut dyn ShellError) {
-            // do nothing
+        fn execute(&self, context: &mut dyn LexerContext)
+                -> Result<Option<Box<dyn Any>>, ShellError> {
+            Ok(None)
         }
     }
 
@@ -201,12 +203,13 @@ mod tests {
         let mut parser = Parser::new(
             "foo = bar
             !remove_me
-            ", &context);
+            ");
         parser.add_command(Box::new(RemoveVariableCommandSpec::default()));
-        parser.next();
+        parser.next(&context);
 
-        assert_eq!(format!("{:?}", parser.next().unwrap().unwrap()), format!("{:?}", RemoveVariableCommand {
-            variable: "remove_me".to_owned()
-        }));
+        assert_eq!(format!("{:?}", parser.next(&context).unwrap().unwrap()),
+                   format!("{:?}", RemoveVariableCommand {
+                       variable: "remove_me".to_owned()
+                   }));
     }
 }

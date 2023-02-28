@@ -54,17 +54,17 @@ impl fmt::Display for TokenGroup {
 
 pub(crate) struct Lexer<'a> {
     commands: Chars<'a>,
-    context: &'a dyn LexerContext,
     line: usize,
     column: usize
 }
 
 impl<'a> Lexer<'a> {
-    pub(crate) fn new(commands: &'a str, context: &'a dyn LexerContext) -> Lexer<'a> {
-        Lexer { commands: commands.chars(), context, line: 0, column: 0 }
+    pub(crate) fn new(commands: &'a str) -> Lexer<'a> {
+        Lexer { commands: commands.chars(), line: 0, column: 0 }
     }
 
-    fn expand(&self, token: &str, in_quotes: bool) -> Result<String, LexerError> {
+    fn expand(&self, context: &dyn LexerContext, token: &str, in_quotes: bool)
+            -> Result<String, LexerError> {
         let mut first_char = true;
         let mut in_replace = false;
         let mut in_replace_first_char = false;
@@ -84,13 +84,13 @@ impl<'a> Lexer<'a> {
                             return Err(self.invalid_var_format());
                         } else if variable.is_empty() {
                             // end of argument
-                            match self.context.get_argument(argument) {
+                            match context.get_argument(argument) {
                                 None => return Err(self.unknown_arg(argument)),
                                 Some(arg) => expanded.push_str(arg)
                             }
                         } else {
                             // end of variable
-                            match self.context.get_value(&variable) {
+                            match context.get_value(&variable) {
                                 None => return Err(self.unknown_var(&variable)),
                                 Some(arg) => expanded.push_str(arg)
                             }
@@ -141,7 +141,7 @@ impl<'a> Lexer<'a> {
                                     return Err(self.invalid_var_format());
                                 } else {
                                     // finished reading the argument, get the value
-                                    match self.context.get_argument(argument) {
+                                    match context.get_argument(argument) {
                                         None => return Err(self.unknown_arg(argument)),
                                         Some(arg) => expanded.push_str(arg)
                                     }
@@ -157,7 +157,7 @@ impl<'a> Lexer<'a> {
                                     return Err(self.escaped_no_quotes());
                                 } else {
                                     // finished reading the variable, get the value out
-                                    match self.context.get_value(&variable) {
+                                    match context.get_value(&variable) {
                                         None => return Err(self.unknown_var(&variable)),
                                         Some(arg) => expanded.push_str(arg)
                                     }
@@ -248,12 +248,18 @@ impl<'a> Lexer<'a> {
             column: self.column
         }
     }
-}
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<TokenGroup, LexerError>;
+    fn all(&mut self, context: &dyn LexerContext) -> Result<Vec<TokenGroup>, LexerError> {
+        let mut tokens: Vec<TokenGroup> = vec![];
+        loop {
+            match self.next(context) {
+                None => return Ok(tokens),
+                Some(result) => tokens.push(result?)
+            }
+        }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next(&mut self, context: &dyn LexerContext) -> Option<Result<TokenGroup, LexerError>> {
         let mut in_quotes = false;
         let mut in_comment = false;
         let mut in_backslash = false;
@@ -273,7 +279,7 @@ impl<'a> Iterator for Lexer<'a> {
 
                     // add the last token
                     if !token.is_empty() {
-                        tokens.push(match self.expand(&token, in_quotes) {
+                        tokens.push(match self.expand(context, &token, in_quotes) {
                             Ok(v) => v,
                             Err(e) => return Some(Err(e))
                         });
@@ -299,7 +305,7 @@ impl<'a> Iterator for Lexer<'a> {
 
                         // add the last token
                         if !token.is_empty() {
-                            tokens.push(match self.expand(&token, in_quotes) {
+                            tokens.push(match self.expand(context, &token, in_quotes) {
                                 Ok(v) => v,
                                 Err(e) => return Some(Err(e))
                             });
@@ -344,7 +350,7 @@ impl<'a> Iterator for Lexer<'a> {
                             if in_quotes {
                                 // end quotes
                                 // include zero length tokens
-                                tokens.push(match self.expand(&token, in_quotes) {
+                                tokens.push(match self.expand(context, &token, in_quotes) {
                                     Ok(v) => v,
                                     Err(e) => return Some(Err(e))
                                 });
@@ -357,7 +363,7 @@ impl<'a> Iterator for Lexer<'a> {
                             // start of comment
                             // add the last token
                             if !token.is_empty() {
-                                tokens.push(match self.expand(&token, in_quotes) {
+                                tokens.push(match self.expand(context, &token, in_quotes) {
                                     Ok(v) => v,
                                     Err(e) => return Some(Err(e))
                                 });
@@ -373,7 +379,7 @@ impl<'a> Iterator for Lexer<'a> {
                                 token.push(c);
                             } else if !token.is_empty() {
                                 // end the current token
-                                tokens.push(match self.expand(&token, in_quotes) {
+                                tokens.push(match self.expand(context, &token, in_quotes) {
                                     Ok(v) => v,
                                     Err(e) => return Some(Err(e))
                                 });
@@ -456,10 +462,13 @@ mod tests {
         context.add_argument("testing456");
         context.set_value("wtf", "foo");
 
-        let result = Lexer::new(text, &context);
+        let mut lexer = Lexer::new(text);
 
-        for x in result {
-            println!("{}", x.unwrap());
+        loop {
+            match lexer.next(&context) {
+                Some(result) => println!("{}", result.unwrap()),
+                None => break
+            }
         }
     }
 
@@ -469,8 +478,9 @@ mod tests {
 
 
         ";
+        let context = SimpleContext::new();
 
-        let result = Lexer::new(text, &SimpleContext::new()).next();
+        let result = Lexer::new(text).next(&context);
 
         assert_eq!(result, None);
     }
@@ -478,8 +488,9 @@ mod tests {
     #[test]
     fn quotes_not_terminated_at_end_of_file_throws_error() {
         let text = "foo \"bar me";
+        let context = SimpleContext::new();
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::UnterminatedQuote { line: 1 });
     }
@@ -488,8 +499,9 @@ mod tests {
     fn quotes_not_terminated_at_end_of_line_throws_error() {
         let text = "foo \"bar me
         hey there";
+        let context = SimpleContext::new();
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::UnterminatedQuote { line: 1 });
     }
@@ -497,8 +509,9 @@ mod tests {
     #[test]
     fn invalid_escaped_character_throws_error() {
         let text = "foo \"b\\^br\" me";
+        let context = SimpleContext::new();
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::InvalidEscapedCharacterFormat {
             line: 1, column: 5, character: "\\^".to_owned()
@@ -508,8 +521,9 @@ mod tests {
     #[test]
     fn escaped_characters() {
         let text = "foo \"bar \\n me \\\" now \\\\ abc \"";
+        let context = SimpleContext::new();
 
-        let commands = Lexer::new(text, &SimpleContext::new()).next().unwrap();
+        let commands = Lexer::new(text).next(&context).unwrap();
 
         assert_eq!(commands.unwrap().tokens[1], "bar \n me \" now \\ abc ");
     }
@@ -517,9 +531,10 @@ mod tests {
     #[test]
     fn single_command_is_processed() {
         let text = "foo bar";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0], "foo_/_bar");
@@ -530,9 +545,10 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 3);
         assert_eq!(commands[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
@@ -549,9 +565,10 @@ mod tests {
         \"Jojo left his home\" in \"Tuscon, Arizona\"
 
         ";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 3);
         assert_eq!(commands[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
@@ -562,9 +579,10 @@ mod tests {
     #[test]
     fn whitespace_is_ignored() {
         let text = "   foo     bar  ";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0], "foo_/_bar");
@@ -575,9 +593,10 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner \
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner_/_But_/_he_/_knew it couldn't_/_last");
@@ -588,9 +607,9 @@ mod tests {
     fn empty_quotes_can_be_a_token() {
         let text = "foo \"\" bar";
         let context = SimpleContext::new();
-        let lexer = Lexer::new(text, &context);
 
-        let commands: Vec<Vec<String>> = lexer.map(|r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         let tokens = &commands[0];
         assert_eq!(tokens.len(), 3);
@@ -602,10 +621,13 @@ mod tests {
     #[test]
     fn backslash_not_in_quotes_is_error() {
         let text = "back\\\"slash";
+        let context = SimpleContext::new();
 
-        let result = Lexer::new(text, &SimpleContext::new()).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
-        assert_eq!(result, LexerError::InvalidEscapedCharacterFormat { line: 1, column: 1, character: "\\\"".to_owned() });
+        assert_eq!(result, LexerError::InvalidEscapedCharacterFormat {
+            line: 1, column: 1, character: "\\\"".to_owned()
+        });
     }
 
     #[test]
@@ -613,9 +635,10 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner
         #But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0], "Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner");
@@ -627,9 +650,10 @@ mod tests {
         let text = "Jojo was a man # who thought he was a loner
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
+        let context = SimpleContext::new();
 
-        let commands: Vec<String> = Lexer::new(text, &SimpleContext::new()).map(
-            |r| r.unwrap().tokens.join("_/_")).collect();
+        let commands: Vec<String> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.join("_/_")).collect();
 
         assert_eq!(commands.len(), 3);
         assert_eq!(commands[0], "Jojo_/_was_/_a_/_man");
@@ -643,8 +667,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument("Jojo left his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home")
     }
@@ -655,7 +679,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let commands = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let commands = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(commands, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
@@ -667,7 +691,7 @@ mod tests {
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
-        let commands = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let commands = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(commands, LexerError::InvalidVariableFormat { line: 1, column: 1 });
     }
@@ -679,8 +703,8 @@ mod tests {
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home");
     }
@@ -691,8 +715,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home")
     }
@@ -703,7 +727,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::UnknownVariable {
             line: 1, column: 1, variable: "$1".to_owned()
@@ -718,8 +742,8 @@ mod tests {
         context.add_argument("left");
         context.add_argument("his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left");
         assert_eq!(commands[0][1], "his home");
@@ -731,8 +755,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument("12");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "12345");
     }
@@ -743,8 +767,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", "Jojo left his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home")
     }
@@ -755,7 +779,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", " left his home");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
@@ -766,8 +790,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", " left his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home")
     }
@@ -778,7 +802,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.add_argument(" left his home");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::UnknownVariable {
             line: 1, column: 1, variable: "$1".to_owned()
@@ -793,8 +817,8 @@ mod tests {
         context.set_value("bar", "left");
         context.set_value("me", "his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left");
         assert_eq!(commands[0][1], "his home");
@@ -807,7 +831,7 @@ mod tests {
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::EscapedCharacterNotInQuotes { line: 1, column: 1 });
     }
@@ -819,8 +843,8 @@ mod tests {
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home");
     }
@@ -831,8 +855,8 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", "Jojo left ");
 
-        let commands: Vec<Vec<String>> = Lexer::new(text, &context).map(
-            |r| r.unwrap().tokens).collect();
+        let commands: Vec<Vec<String>> = Lexer::new(text).all(&context).unwrap().iter()
+            .map(|r| r.tokens.clone()).collect();
 
         assert_eq!(commands[0][0], "Jojo left his home");
     }
@@ -843,7 +867,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("foo", "Jojo left ");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::InvalidVariableFormat { line: 1, column: 1 });
     }
@@ -854,7 +878,7 @@ mod tests {
         let mut context = SimpleContext::new();
         context.set_value("f@oo", "Jojo left ");
 
-        let result = Lexer::new(text, &context).next().unwrap().err().unwrap();
+        let result = Lexer::new(text).next(&context).unwrap().err().unwrap();
 
         assert_eq!(result, LexerError::InvalidVariableFormat { line: 1, column: 1 });
     }
