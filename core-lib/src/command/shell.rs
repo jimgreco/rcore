@@ -1,12 +1,11 @@
 use std::io;
-use std::io::{Read, Write};
-use log::warn;
-use crate::command::context::{Context, Source};
+use crate::command::context::{UserContext, IoContext};
 use crate::command::lexer::LexerError;
 use crate::command::parser::{parse_command, ParserError};
 
 use thiserror::Error;
-use crate::command::commands::Command;
+use crate::command::commands::{AssignCommand, Command, DefaultAssignCommand, SourceCommand, UnsetCommand};
+use crate::command::Registry;
 
 /// Errors thrown executing commands in the command file.
 #[derive(Debug, Error)]
@@ -15,6 +14,11 @@ pub enum ShellError {
     LexerError(LexerError),
     #[error(transparent)]
     ParserError(ParserError),
+    #[error("File does not exist: {file}, error={error}")]
+    UnknownFile {
+        file: String,
+        error: io::Error
+    },
     #[error("I/O error: {0}")]
     Io(io::Error)
 }
@@ -26,6 +30,8 @@ impl PartialEq for ShellError {
                 => e1.eq(e2),
             (ShellError::ParserError(e1), ShellError::ParserError(e2))
                 => e1.eq(e2),
+            (ShellError::UnknownFile { file, ..}, ShellError::UnknownFile { file: file2, ..})
+                => file.eq(file2),
             _ => false
         }
     }
@@ -36,30 +42,32 @@ impl PartialEq for ShellError {
 }
 
 pub struct Shell {
-    command_specs: Vec<Box<dyn Command>>
+    commands: Vec<Box<dyn Command>>,
+    pub(crate) registry: Registry
 }
 
 impl Shell {
-    pub fn add_command_spec(&mut self, spec: Box<dyn Command>) {
-        self.command_specs.push(spec);
+    pub fn new() -> Self {
+        Shell {
+            commands: vec![Box::new(AssignCommand {}),
+                           Box::new(DefaultAssignCommand {}),
+                           Box::new(UnsetCommand {}),
+                           Box::new(SourceCommand {})],
+            registry: Registry::new()
+        }
     }
 
-    fn execute_commands(
-            &self,
-            source: &str,
-            input: &mut dyn Read,
-            output: &mut dyn Write,
-            context: &mut Context) -> Result<(), ShellError> {
-        let mut source = Source::new(source, input, output);
+    pub fn add_command(&mut self, spec: Box<dyn Command>) {
+        self.commands.push(spec);
+    }
 
+    pub fn execute_commands(&self, user_context: &mut UserContext, io_context: &mut IoContext)
+                            -> Result<(), ShellError> {
         loop {
-            match parse_command(&context, &mut source, &self.command_specs) {
+            match parse_command(&user_context, io_context, &self.commands) {
                 Ok(result) => match result {
                     Some((command, spec)) => {
-                        let option = spec.execute(&command, context)?;
-                        if option.is_some() {
-                            let x = option.unwrap();
-                        }
+                        spec.execute(&command, user_context, io_context, &self)?;
                     }
                     None => return Ok(())
                 }

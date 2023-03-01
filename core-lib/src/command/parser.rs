@@ -4,7 +4,7 @@ use log;
 use log::Level;
 use crate::command::commands::Command;
 use crate::command::lexer::{lex_command, LexerError, TokenGroup};
-use crate::command::context::{Context, Source};
+use crate::command::context::{UserContext, IoContext};
 
 use thiserror::Error;
 use log::debug;
@@ -35,6 +35,8 @@ impl PartialEq for ParserError {
             (ParserError::InvalidVariableName { command, var },
                 ParserError::InvalidVariableName { command: command2, var: var2 })
                 => command.eq(command2) && var.eq(var2),
+            (ParserError::InvalidCommandFormat(e1), ParserError::InvalidCommandFormat(e2))
+                => e1.eq(e2),
             (ParserError::UnknownCommand(e1), ParserError::UnknownCommand(e2))
                 => e1.eq(e2),
             _ => false
@@ -47,15 +49,15 @@ impl PartialEq for ParserError {
 }
 
 pub(crate) fn parse_command<'a>(
-        context: &Context, source: &mut Source, specs: &'a Vec<Box<dyn Command>>)
+        user_context: &UserContext, io_context: &mut IoContext, specs: &'a Vec<Box<dyn Command>>)
         -> Result<Option<(TokenGroup, &'a Box<dyn Command>)>, ParserError> {
-    let line = source.line;
-    match lex_command(context, source) {
+    let line = io_context.line;
+    match lex_command(user_context, io_context) {
         Some(result) => {
             match result {
-                Ok(mut token_group) => {
+                Ok(token_group) => {
                     if log::log_enabled!(Level::Debug) {
-                        debug!("{}:{}: {}", source.source, line, token_group.tokens_string());
+                        debug!("{}:{}: {}", io_context.source, line, token_group.tokens_string());
                     }
 
                     for spec in specs {
@@ -81,29 +83,32 @@ pub(crate) fn parse_command<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
-    use crate::command::commands::{AssignmentCommand, DefaultAssignmentCommand, Command,
-                                   validate_variable};
-    use crate::command::context::{Context, Source};
+    use std::io;
+    use std::io::{Cursor, Read};
+    use crate::command::commands::{AssignCommand, DefaultAssignCommand, Command};
+    use crate::command::context::{UserContext, IoContext};
     use crate::command::lexer::{LexerError, TokenGroup};
     use crate::command::parser::{parse_command, ParserError};
-    use crate::command::shell::ShellError;
 
+    pub(crate) fn cursor(text: &'static str) -> Box<dyn Read> {
+        Box::new(Cursor::new(text.as_bytes()))
+    }
+    
     fn specs() -> Vec<Box<dyn Command>> {
         let mut vec: Vec<Box<dyn Command>> = vec![];
-        vec.push(Box::new(AssignmentCommand {}));
-        vec.push(Box::new(DefaultAssignmentCommand {}));
+        vec.push(Box::new(AssignCommand {}));
+        vec.push(Box::new(DefaultAssignCommand {}));
         vec
     }
 
     #[test]
     fn command_iteration() {
         let specs = specs();
-        let context = Context::default();
+        let context = UserContext::default();
         let text = "foo = bar\nfoo := soo\ndo12 = goo";
-        let mut cursor = Source::cursor(text);
-        let mut sink = Source::stdout();
-        let mut source = Source::new_test(&mut cursor, &mut sink);
+        let mut cursor = cursor(text);
+        let mut sink = io::sink();
+        let mut source = IoContext::new("test", &mut cursor, &mut sink);
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
@@ -113,15 +118,15 @@ mod tests {
 
     #[test]
     fn lexer_error_is_passed_through() {
-        let context = Context::default();
+        let context = UserContext::default();
         let specs = specs();
         let text = "foo = bar
 foo = s\"oo
 do12 = goo
             ";
-        let mut cursor = Source::cursor(text);
-        let mut sink = Source::stdout();
-        let mut source = Source::new_test(&mut cursor, &mut sink);
+        let mut cursor = cursor(text);
+        let mut sink = io::sink();
+        let mut source = IoContext::new("test", &mut cursor, &mut sink);
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
 
         assert_eq!(ParserError::LexerError(LexerError::UnterminatedQuote {
@@ -131,15 +136,15 @@ do12 = goo
 
     #[test]
     fn unknown_command_throws_error() {
-        let context = Context::default();
+        let context = UserContext::default();
         let specs = specs();
         let text = "foo = bar
             foo /= soo
             do12 = goo
             ";
-        let mut cursor = Source::cursor(text);
-        let mut sink = Source::stdout();
-        let mut source = Source::new_test(&mut cursor, &mut sink);
+        let mut cursor = cursor(text);
+        let mut sink = io::sink();
+        let mut source = IoContext::new("test", &mut cursor, &mut sink);
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
 
         assert_eq!(ParserError::UnknownCommand(TokenGroup {
@@ -150,15 +155,15 @@ do12 = goo
 
     #[test]
     fn invalid_command_throws_error() {
-        let context = Context::default();
+        let context = UserContext::default();
         let specs = specs();
         let text = "foo = bar
             12foo = soo
             do12 = goo
             ";
-        let mut cursor = Source::cursor(text);
-        let mut sink = Source::stdout();
-        let mut source = Source::new_test(&mut cursor, &mut sink);
+        let mut cursor = cursor(text);
+        let mut sink = io::sink();
+        let mut source = IoContext::new("test", &mut cursor, &mut sink);
         parse_command(&context, &mut source, &specs).unwrap().unwrap();
 
         assert_eq!(ParserError::InvalidVariableName {
@@ -175,7 +180,7 @@ do12 = goo
 
     #[derive(Debug)]
     struct RemoveVariableCommand {
-        #[warn(dead_code)]
+        #[allow(dead_code)]
         var: String
     }
 }

@@ -1044,7 +1044,7 @@ mod registry_tests {
         let mut registry = create_registry();
         registry.parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
 
-        let result = registry.attr_value("/foo", "user_id").unwrap();
+        let result: i32 = registry.attr_value("/foo", "user_id").unwrap();
 
         assert_eq!(42, result);
     }
@@ -1112,7 +1112,7 @@ mod registry_tests {
         registry.parsed_create_instance(
             "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
 
-        let result = registry.invoke_method_value(
+        let result: i32 = registry.invoke_method_value(
             "/foo", "add_one", vec![PolarValue::Integer(42)]).unwrap();
 
         assert_eq!(43, result);
@@ -1136,7 +1136,7 @@ mod registry_tests {
         registry.parsed_create_instance(
             "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
 
-        let result = registry.parsed_invoke_method_value(
+        let result: i32 = registry.parsed_invoke_method_value(
             "/foo/add_one", ".", vec!["42"]).unwrap();
 
         assert_eq!(43, result);
@@ -1189,7 +1189,7 @@ mod registry_tests {
     fn call_instance_method_two_params() {
         let mut registry = create_registry2();
 
-        let result = registry.parsed_invoke_method_value(
+        let result: i32 = registry.parsed_invoke_method_value(
             "/foo/bar", "add_two", vec!["1", "2"]).unwrap();
 
         assert_eq!(3, result);
@@ -1199,7 +1199,7 @@ mod registry_tests {
     fn call_instance_method_with_instance_returned_object() {
         let mut registry = create_registry2();
 
-        let result = registry.parsed_invoke_method_value(
+        let result: Bar = registry.parsed_invoke_method_value(
             "/foo/bar", "bar", vec![]).unwrap();
 
         assert_eq!(Bar{}, result);

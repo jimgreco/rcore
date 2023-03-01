@@ -1,88 +1,176 @@
-use std::any::Any;
-use std::fmt::{Debug, Display, Formatter};
+use std::fs::File;
+use std::io::{BufReader};
 use log::{Level, debug};
-use crate::command::context::Context;
+use crate::command::context::{UserContext, IoContext};
 use crate::command::lexer::TokenGroup;
 use crate::command::parser::ParserError;
-use crate::command::shell::ShellError;
+use crate::command::shell::{Shell, ShellError};
 
 pub trait Command {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError>;
-    fn execute(&self, command: &TokenGroup, context: &mut Context)
-        -> Result<Option<Box<dyn Any>>, ShellError>;
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               io_context: &mut IoContext,
+               shell: &Shell) -> Result<(), ShellError>;
 }
 
 #[derive(PartialEq)]
-pub(crate) struct AssignmentCommand {}
+pub(crate) struct AssignCommand {}
 
 #[derive(PartialEq)]
-pub(crate) struct DefaultAssignmentCommand {}
+pub(crate) struct DefaultAssignCommand {}
+
+#[derive(PartialEq)]
+pub(crate) struct UnsetCommand {}
 
 #[derive(PartialEq)]
 pub(crate) struct SourceCommand {}
 
-impl Command for AssignmentCommand {
+impl Command for AssignCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
         validate_assigment(command, "=")
     }
 
-    fn execute(&self, command: &TokenGroup, context: &mut Context)
-            -> Result<Option<Box<dyn Any>>, ShellError> {
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               _io_context: &mut IoContext,
+               _shell: &Shell) -> Result<(), ShellError> {
         let var = &command.tokens[0];
         let value = &command.tokens[2];
-        debug!("AssignmentCommand: {} = {}", var, value);
-        context.set_value(var, value);
-        Ok(None)
+        debug!("[Assign] setting variable {} = {}", var, value);
+        user_context.set_value(var, value);
+        Ok(())
     }
 }
-impl Command for DefaultAssignmentCommand {
+
+impl Command for DefaultAssignCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
         validate_assigment(command, ":=")
     }
 
-    fn execute(&self, command: &TokenGroup, context: &mut Context)
-               -> Result<Option<Box<dyn Any>>, ShellError> {
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               _io_context: &mut IoContext,
+               _shell: &Shell) -> Result<(), ShellError> {
         let var = &command.tokens[0];
         let value = &command.tokens[2];
         if log::log_enabled!(Level::Debug) {
-            let replaced_value = context.get_value(var).is_some();
-            context.set_default_value(var, value);
+            let replaced_value = user_context.get_value(var).is_some();
+            user_context.set_default_value(var, value);
             if replaced_value {
-                debug!("DefaultAssignmentCommand (new): {} = {}", var, value);
+                debug!("[DefaultAssign] setting variable {} = {}", var, value);
             } else {
-                debug!("DefaultAssignmentCommand (replace): {} = {}", var, value);
+                debug!("[DefaultAssign] replacing variable {} = {}", var, value);
             }
         } else {
-            context.set_default_value(var, value);
+            user_context.set_default_value(var, value);
         }
-        Ok(None)
+        Ok(())
+    }
+}
+
+impl Command for UnsetCommand {
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
+        if &command.tokens[0] == "unset" {
+            let len = command.tokens.len();
+            if len == 1 {
+                return Err(ParserError::InvalidCommandFormat(command.clone()));
+            }
+            for i in 1..len {
+                if !validate_variable(&command.tokens[i]) {
+                    return Err(ParserError::InvalidVariableName {
+                        command: command.clone(),
+                        var: command.tokens[i].to_owned(),
+                    });
+                }
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               _io_context: &mut IoContext,
+               _shell: &Shell) -> Result<(), ShellError> {
+        debug!("[Unset] removing variables {}",
+            command.tokens_substring(1, command.tokens.len()));
+        for i in 1..command.tokens.len() {
+            user_context.remove_value(&command.tokens[i]);
+        }
+        Ok(())
     }
 }
 
 impl Command for SourceCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ParserError> {
         let len = command.tokens.len();
-        if len > 0 {
-            if command.tokens[0] == "source" {
-                if len == 2 || len == 3 && command.tokens[1] == "-s" {
-                    return Ok(true);
-                }
-                return Err(ParserError::InvalidCommandFormat(command.clone()))
+        if command.tokens[0] == "source" {
+            return if len == 1 {
+                Err(ParserError::InvalidCommandFormat(command.clone()))
+            } else if len == 2 && command.tokens[1] != "-s" || len >= 3 {
+                Ok(true)
+            } else {
+                Err(ParserError::InvalidCommandFormat(command.clone()))
             }
         }
         Ok(false)
     }
 
-    fn execute(&self, command: &TokenGroup, context: &mut Context)
-               -> Result<Option<Box<dyn Any>>, ShellError> {
-        let sub_shell = command.tokens.len() == 3;
-        let file = if sub_shell { &command.tokens[3] } else { &command.tokens[2] };
-        debug!("loading file: {}, subshell={}", file, sub_shell);
-        Ok(None)
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               io_context: &mut IoContext,
+               shell: &Shell) -> Result<(), ShellError> {
+        let subshell = command.tokens[1] == "-s";
+        let arg_start = if subshell { 3 } else { 2 };
+        let file_name = &command.tokens[arg_start - 1];
+        let args = &command.tokens[arg_start..];
+
+        debug!("[Source] loading file {}{}, args={}",
+            file_name,
+            if subshell { " (subshell)" } else { "" },
+            command.tokens_substring(arg_start, command.tokens.len()));
+
+        // make a copy of all variables
+        let mut new_user_context = user_context.clone();
+        new_user_context.clear_arguments();
+        for arg in args {
+            new_user_context.add_argument(arg);
+        }
+
+        // do execution
+        match File::open(file_name) {
+            Ok(f) => {
+                let mut reader = BufReader::new(f);
+                let mut new_io_context = IoContext::new(
+                    file_name, &mut reader, &mut io_context.output);
+                shell.execute_commands(&mut new_user_context, &mut new_io_context)?;
+            }
+            Err(error) => return Err(ShellError::UnknownFile {
+                file: file_name.to_owned(),
+                error
+            })
+        }
+
+        // update variables
+        if !subshell {
+            user_context.set_pwd(&new_user_context.pwd);
+            user_context.clear_variables();
+            for (key, value) in &new_user_context.variables {
+                user_context.set_value(key, value);
+            }
+        }
+
+        Ok(())
     }
 }
 
-pub(crate) fn validate_variable(variable: &str) -> bool {
+fn validate_variable(variable: &str) -> bool {
     let mut first = true;
 
     for c in variable.chars() {
@@ -116,14 +204,16 @@ fn validate_assigment(command: &TokenGroup, sign: &'static str)
 
 #[cfg(test)]
 mod assignment_tests {
-    use crate::command::commands::{AssignmentCommand, Command};
-    use crate::command::context::Context;
+    use std::io;
+    use crate::command::commands::{AssignCommand, Command};
+    use crate::command::context::{UserContext, IoContext};
     use crate::command::lexer::TokenGroup;
     use crate::command::parser::ParserError;
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
-        let spec = AssignmentCommand {};
+        let spec = AssignCommand {};
 
         let result = spec.validate(&TokenGroup {
             line: 0,
@@ -135,7 +225,7 @@ mod assignment_tests {
 
     #[test]
     fn validate_invalid_assignment_command_returns_false() {
-        let spec = AssignmentCommand {};
+        let spec = AssignCommand {};
 
         let result = spec.validate(&TokenGroup {
             line: 0,
@@ -147,7 +237,7 @@ mod assignment_tests {
 
     #[test]
     fn validate_invalid_variable_name_returns_error() {
-        let spec = AssignmentCommand {};
+        let spec = AssignCommand {};
         let mut command = TokenGroup {
             line: 0,
             tokens: vec!["12foo".to_owned(), "=".to_owned(), "bar".to_owned()],
@@ -161,15 +251,19 @@ mod assignment_tests {
 
     #[test]
     fn execute_assignment_command() {
-        let mut context = Context::default();
-        let spec = AssignmentCommand {};
+        let mut context = UserContext::default();
+        let spec = AssignCommand {};
+        let shell = Shell::new();
+        let mut input = io::stdin();
+        let mut output = io::sink();
+        let mut source = IoContext::new("test", &mut input, &mut output);
         let mut command = TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
         };
         spec.validate(&mut command).unwrap();
 
-        spec.execute(&command, &mut context).unwrap();
+        spec.execute(&command, &mut context, &mut source, &shell).unwrap();
 
         assert_eq!("bar", context.get_value("foo").unwrap());
     }
@@ -177,14 +271,16 @@ mod assignment_tests {
 
 #[cfg(test)]
 mod default_assignment_tests {
-    use crate::command::commands::{DefaultAssignmentCommand, Command};
-    use crate::command::context::Context;
+    use std::io;
+    use crate::command::commands::{DefaultAssignCommand, Command};
+    use crate::command::context::{UserContext, IoContext};
     use crate::command::lexer::TokenGroup;
     use crate::command::parser::ParserError;
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
-        let spec = DefaultAssignmentCommand {};
+        let spec = DefaultAssignCommand {};
 
         let result = spec.validate(&TokenGroup {
             line: 0,
@@ -196,7 +292,7 @@ mod default_assignment_tests {
 
     #[test]
     fn validate_invalid_assignment_command_returns_false() {
-        let spec = DefaultAssignmentCommand {};
+        let spec = DefaultAssignCommand {};
 
         let result = spec.validate(&TokenGroup {
             line: 0,
@@ -208,7 +304,7 @@ mod default_assignment_tests {
 
     #[test]
     fn validate_invalid_variable_name_returns_error() {
-        let spec = DefaultAssignmentCommand {};
+        let spec = DefaultAssignCommand {};
         let command = TokenGroup {
             line: 0,
             tokens: vec!["12foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
@@ -220,33 +316,137 @@ mod default_assignment_tests {
     }
 
     #[test]
-    fn execute_default_assignment_command() {
-        let mut context = Context::default();
-        let spec = DefaultAssignmentCommand {};
+    fn execute_default_assignment_command_sets_new_value() {
+        let mut context = UserContext::default();
+        let shell = Shell::new();
+        let mut input = io::stdin();
+        let mut output = io::sink();
+        let mut source = IoContext::new("test", &mut input, &mut output);
+        let spec = DefaultAssignCommand {};
         let mut command = TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
         };
         spec.validate(&mut command).unwrap();
 
-        spec.execute(&command, &mut context).unwrap();
+        spec.execute(&command, &mut context, &mut source, &shell).unwrap();
 
         assert_eq!("bar", context.get_value("foo").unwrap());
     }
 
     #[test]
-    fn execute_default_assignment_command_already_there() {
-        let mut context = Context::default();
+    fn execute_default_assignment_command_already_there_doesnt_replace() {
+        let mut context = UserContext::default();
         context.set_value("foo", "soo");
-        let spec = DefaultAssignmentCommand {};
+        let shell = Shell::new();
+        let mut input = io::stdin();
+        let mut output = io::sink();
+        let mut source = IoContext::new("test", &mut input, &mut output);
+        let spec = DefaultAssignCommand {};
         let mut command = TokenGroup {
             line: 0,
             tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
         };
         spec.validate(&mut command).unwrap();
 
-        spec.execute(&command, &mut context).unwrap();
+        spec.execute(&command, &mut context, &mut source, &shell).unwrap();
+
+        assert_eq!("soo", context.get_value("foo").unwrap());
+    }
+}
+
+#[cfg(test)]
+mod unset_tests {
+    use std::io;
+    use crate::command::commands::{Command, UnsetCommand};
+    use crate::command::context::{UserContext, IoContext};
+    use crate::command::lexer::TokenGroup;
+    use crate::command::parser::ParserError;
+    use crate::command::shell::Shell;
+
+    #[test]
+    fn validate_valid_unset_command_with_one_variable_returns_true() {
+        let spec = UnsetCommand {};
+
+        let result = spec.validate(&TokenGroup {
+            line: 0,
+            tokens: vec!["unset".to_owned(), "foo".to_owned()],
+        }).unwrap();
+
+        assert!(result);
+    }
+
+    #[test]
+    fn validate_valid_unset_command_with_multiple_variables_returns_true() {
+        let spec = UnsetCommand {};
+
+        let result = spec.validate(&TokenGroup {
+            line: 0,
+            tokens: vec!["unset".to_owned(), "foo".to_owned(), "bar".to_owned()],
+        }).unwrap();
+
+        assert!(result);
+    }
+
+    #[test]
+    fn different_command_returns_false() {
+        let spec = UnsetCommand {};
+
+        let result = spec.validate(&TokenGroup {
+            line: 0,
+            tokens: vec!["foo".to_owned(), "=".to_owned(), "unset".to_owned()],
+        }).unwrap();
+
+        assert!(!result);
+    }
+
+    #[test]
+    fn unset_with_no_variables_is_error() {
+        let spec = UnsetCommand {};
+        let command = TokenGroup {
+            line: 0,
+            tokens: vec!["unset".to_owned()],
+        };
+
+        let result = spec.validate(&command).err().unwrap();
+
+        assert_eq!(ParserError::InvalidCommandFormat(command), result);
+    }
+
+    #[test]
+    fn unset_invalid_variable_name_returns_error() {
+        let spec = UnsetCommand {};
+        let command = TokenGroup {
+            line: 0,
+            tokens: vec!["unset".to_owned(), "foo".to_owned(), "12foo".to_owned()],
+        };
+
+        let result = spec.validate(&command).err().unwrap();
+
+        assert_eq!(ParserError::InvalidVariableName { command, var: "12foo".to_owned() },
+                   result);
+    }
+
+    #[test]
+    fn execute_unset_command() {
+        let mut context = UserContext::default();
+        context.set_value("foo", "bar");
+        context.set_value("soo", "doo");
+        context.set_value("goo", "boo");
+        let shell = Shell::new();
+        let mut input = io::stdin();
+        let mut output = io::sink();
+        let mut source = IoContext::new("test", &mut input, &mut output);
+        let spec = UnsetCommand {};
+        let command = TokenGroup {
+            line: 0,
+            tokens: vec!["unset".to_owned(), "soo".to_owned(), "goo".to_owned()],
+        };
+
+        spec.execute(&command, &mut context, &mut source, &shell).unwrap();
 
         assert_eq!("bar", context.get_value("foo").unwrap());
+        assert!(context.get_value("soo").is_none());
+        assert!(context.get_value("goo").is_none());
     }
 }
