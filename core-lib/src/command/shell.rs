@@ -6,60 +6,6 @@ use crate::command::lexer::{lex_command, LexerError, TokenGroup};
 use thiserror::Error;
 use crate::command::{Registry, RegistryError};
 
-/// Errors thrown executing commands in the command file.
-#[derive(Debug, Error)]
-pub enum ShellError {
-    #[error(transparent)]
-    LexerError(LexerError),
-    #[error("Error executing command on the registry: {command}, error={error}")]
-    RegistryError {
-        command: TokenGroup,
-        error: RegistryError,
-    },
-    #[error("File does not exist: {file}, error={error}")]
-    UnknownFile {
-        file: String,
-        error: io::Error,
-    },
-    #[error("invalid variable name: {var}, command={command}")]
-    InvalidVariableName {
-        command: TokenGroup,
-        var: String,
-    },
-    #[error("invalid formatted command: {0}")]
-    InvalidCommandFormat(TokenGroup),
-    #[error("unknown command: {0}")]
-    UnknownCommand(TokenGroup),
-    #[error("I/O error: {0}")]
-    IoError(io::Error),
-}
-
-impl PartialEq for ShellError {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ShellError::LexerError(e1), ShellError::LexerError(e2))
-            => e1 == e2,
-            (ShellError::RegistryError { command, error },
-                ShellError::RegistryError { command: command2, error: error2 })
-            => command == command2 && error == error2,
-            (ShellError::UnknownFile { file, .. }, ShellError::UnknownFile { file: file2, .. })
-            => file == file2,
-            (ShellError::InvalidVariableName { command, var },
-                ShellError::InvalidVariableName { command: command2, var: var2 })
-            => command.eq(command2) && var.eq(var2),
-            (ShellError::InvalidCommandFormat(e1), ShellError::InvalidCommandFormat(e2))
-            => e1.eq(e2),
-            (ShellError::UnknownCommand(e1), ShellError::UnknownCommand(e2))
-            => e1.eq(e2),
-            _ => false
-        }
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        !self.eq(other)
-    }
-}
-
 pub struct Shell {
     pub(crate) registry: Registry,
 }
@@ -110,6 +56,60 @@ impl Shell {
                 None => return Ok(())
             }
         }
+    }
+}
+
+/// Errors thrown executing commands by the shell.
+#[derive(Debug, Error)]
+pub enum ShellError {
+    #[error(transparent)]
+    LexerError(LexerError),
+    #[error("Error executing command on the registry: {command}, error={error}")]
+    RegistryError {
+        command: TokenGroup,
+        error: RegistryError,
+    },
+    #[error("File does not exist: {file}, error={error}")]
+    UnknownFile {
+        file: String,
+        error: io::Error,
+    },
+    #[error("invalid variable name: {var}, command={command}")]
+    InvalidVariableName {
+        command: TokenGroup,
+        var: String,
+    },
+    #[error("invalid formatted command: {0}")]
+    InvalidCommandFormat(TokenGroup),
+    #[error("unknown command: {0}")]
+    UnknownCommand(TokenGroup),
+    #[error("I/O error: {0}")]
+    IoError(io::Error),
+}
+
+impl PartialEq for ShellError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ShellError::LexerError(e1), ShellError::LexerError(e2))
+            => e1 == e2,
+            (ShellError::RegistryError { command, error },
+                ShellError::RegistryError { command: command2, error: error2 })
+            => command == command2 && error == error2,
+            (ShellError::UnknownFile { file, .. }, ShellError::UnknownFile { file: file2, .. })
+            => file == file2,
+            (ShellError::InvalidVariableName { command, var },
+                ShellError::InvalidVariableName { command: command2, var: var2 })
+            => command.eq(command2) && var.eq(var2),
+            (ShellError::InvalidCommandFormat(e1), ShellError::InvalidCommandFormat(e2))
+            => e1.eq(e2),
+            (ShellError::UnknownCommand(e1), ShellError::UnknownCommand(e2))
+            => e1.eq(e2),
+            _ => false
+        }
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        !self.eq(other)
     }
 }
 

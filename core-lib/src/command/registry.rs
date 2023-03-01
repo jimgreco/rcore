@@ -12,127 +12,6 @@ use super::oso::{
     InstanceMethod,
 };
 
-/// Errors thrown when navigating the command tree.
-#[derive(Debug, Error)]
-pub enum RegistryError {
-    #[error("path does not contain an {expected} to retrieve: {path}")]
-    MissingAtPath {
-        path: String,
-        expected: &'static str,
-    },
-    #[error("cannot create child node at {pwd}/{child}")]
-    InvalidPathChildName {
-        pwd: String,
-        child: String,
-    },
-    #[error("cannot navigate to path: pwd={pwd}, cd={cd}, reason={reason}")]
-    IllegalPathNavigation {
-        pwd: String,
-        cd: String,
-        reason: &'static str,
-    },
-    #[error("duplicate path: {0}")]
-    DuplicatePath(String),
-    #[error("methods or attributes of class share the same name: class={class}, child={child}")]
-    ClassChildNameConflict {
-        class: String,
-        child: String,
-    },
-    #[error("class has already been registered: {0}")]
-    DuplicateClass(String),
-    #[error("cannot make instance from class that is not registered: {0}")]
-    UnknownClass(String),
-    #[error("class does not have a constructor: {0}")]
-    NoConstructor(String),
-    #[error("invalid number of method parameters provided: {class}::{method} expects {expected} but received {received}")]
-    InvalidNumberOfMethodParameters {
-        class: String,
-        method: String,
-        expected: usize,
-        received: usize,
-    },
-    #[error("invalid method parameter type: {class}::{method} parameter {param_index} has type {param_type}: {reason}")]
-    InvalidMethodParameter {
-        class: String,
-        method: String,
-        param_index: usize,
-        param_type: &'static str,
-        reason: &'static str,
-    },
-    #[error("invalid {cast_type} cast: pwd={pwd}, cd={cd}, expected={expected}, got={got}")]
-    InvalidCast {
-        pwd: String,
-        cd: String,
-        cast_type: &'static str,
-        expected: String,
-        got: String,
-    },
-    #[error("an unhandled error from oso: reason={reason}, error={error}")]
-    InvocationFailure {
-        pwd: String,
-        cd: String,
-        class: String,
-        method: String,
-        invocation_type: &'static str,
-        reason: &'static str,
-        error: OsoError,
-    },
-}
-
-impl PartialEq for RegistryError {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (RegistryError::MissingAtPath { path, expected },
-                RegistryError::MissingAtPath { path: path2, expected: expected2 }) =>
-                path == path2 && expected == expected2,
-            (RegistryError::InvalidPathChildName { pwd, child },
-                RegistryError::InvalidPathChildName { pwd: pwd2, child: child2 }) =>
-                pwd == pwd2 && child == child2,
-            (RegistryError::IllegalPathNavigation { pwd, cd, .. },
-                RegistryError::IllegalPathNavigation { pwd: pwd2, cd: cd2, .. }) =>
-                pwd == pwd2 && cd == cd2,
-            (RegistryError::DuplicatePath(path),
-                RegistryError::DuplicatePath(path2)) =>
-                path == path2,
-            (RegistryError::DuplicateClass(class),
-                RegistryError::DuplicateClass(class2)) =>
-                class == class2,
-            (RegistryError::ClassChildNameConflict { class, child },
-                RegistryError::ClassChildNameConflict { class: class2, child: child2 }) =>
-                class == class2 && child == child2,
-            (RegistryError::UnknownClass(class),
-                RegistryError::UnknownClass(class2)) =>
-                class == class2,
-            (RegistryError::NoConstructor(class),
-                RegistryError::NoConstructor(class2)) =>
-                class == class2,
-            (RegistryError::InvalidNumberOfMethodParameters { class, method, expected, received },
-                RegistryError::InvalidNumberOfMethodParameters { class: class2, method: method2, expected: expected2, received: received2 }) =>
-                class == class2 && method == method2 && expected == expected2 && received == received2,
-            (RegistryError::InvalidMethodParameter { class, method, param_index, param_type, .. },
-                RegistryError::InvalidMethodParameter { class: class2, method: method2, param_index: param_index2, param_type: param_type2, .. }) =>
-                class == class2 && method == method2 && param_index == param_index2 && param_type == param_type2,
-            (RegistryError::InvalidCast { pwd, cd, cast_type, expected, got },
-                RegistryError::InvalidCast { pwd: pwd2, cd: cd2, cast_type: cast_type2, expected: expected2, got: got2 }) =>
-                pwd == pwd2 && cd == cd2 && cast_type == cast_type2 && expected == expected2 && got == got2,
-            (RegistryError::InvocationFailure { pwd, cd, class, method, invocation_type, .. },
-                RegistryError::InvocationFailure { pwd: pwd2, cd: cd2, class: class2, method: method2, invocation_type: invocation_type2, .. }) =>
-                pwd == pwd2 && cd == cd2 && class == class2 && method == method2 && invocation_type == invocation_type2,
-            _ => false
-        }
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        !eq(self, other)
-    }
-}
-
-pub struct Registry {
-    host: Host,
-    paths: HashMap<usize, Path>,
-    root_id: usize,
-}
-
 #[derive(Debug)]
 pub struct Path {
     id: usize,
@@ -144,6 +23,18 @@ pub struct Path {
     owner: Option<usize>,
     attr: Option<&'static str>,
     method: Option<&'static str>,
+}
+
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+pub struct Registry {
+    host: Host,
+    paths: HashMap<usize, Path>,
+    root_id: usize,
 }
 
 impl Registry {
@@ -768,9 +659,118 @@ impl Registry {
     }
 }
 
-impl PartialEq for Path {
+/// Errors thrown when navigating the command tree.
+#[derive(Debug, Error)]
+pub enum RegistryError {
+    #[error("path does not contain an {expected} to retrieve: {path}")]
+    MissingAtPath {
+        path: String,
+        expected: &'static str,
+    },
+    #[error("cannot create child node at {pwd}/{child}")]
+    InvalidPathChildName {
+        pwd: String,
+        child: String,
+    },
+    #[error("cannot navigate to path: pwd={pwd}, cd={cd}, reason={reason}")]
+    IllegalPathNavigation {
+        pwd: String,
+        cd: String,
+        reason: &'static str,
+    },
+    #[error("duplicate path: {0}")]
+    DuplicatePath(String),
+    #[error("methods or attributes of class share the same name: class={class}, child={child}")]
+    ClassChildNameConflict {
+        class: String,
+        child: String,
+    },
+    #[error("class has already been registered: {0}")]
+    DuplicateClass(String),
+    #[error("cannot make instance from class that is not registered: {0}")]
+    UnknownClass(String),
+    #[error("class does not have a constructor: {0}")]
+    NoConstructor(String),
+    #[error("invalid number of method parameters provided: {class}::{method} expects {expected} but received {received}")]
+    InvalidNumberOfMethodParameters {
+        class: String,
+        method: String,
+        expected: usize,
+        received: usize,
+    },
+    #[error("invalid method parameter type: {class}::{method} parameter {param_index} has type {param_type}: {reason}")]
+    InvalidMethodParameter {
+        class: String,
+        method: String,
+        param_index: usize,
+        param_type: &'static str,
+        reason: &'static str,
+    },
+    #[error("invalid {cast_type} cast: pwd={pwd}, cd={cd}, expected={expected}, got={got}")]
+    InvalidCast {
+        pwd: String,
+        cd: String,
+        cast_type: &'static str,
+        expected: String,
+        got: String,
+    },
+    #[error("an unhandled error from oso: reason={reason}, error={error}")]
+    InvocationFailure {
+        pwd: String,
+        cd: String,
+        class: String,
+        method: String,
+        invocation_type: &'static str,
+        reason: &'static str,
+        error: OsoError,
+    },
+}
+
+impl PartialEq for RegistryError {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        match (self, other) {
+            (RegistryError::MissingAtPath { path, expected },
+                RegistryError::MissingAtPath { path: path2, expected: expected2 }) =>
+                path == path2 && expected == expected2,
+            (RegistryError::InvalidPathChildName { pwd, child },
+                RegistryError::InvalidPathChildName { pwd: pwd2, child: child2 }) =>
+                pwd == pwd2 && child == child2,
+            (RegistryError::IllegalPathNavigation { pwd, cd, .. },
+                RegistryError::IllegalPathNavigation { pwd: pwd2, cd: cd2, .. }) =>
+                pwd == pwd2 && cd == cd2,
+            (RegistryError::DuplicatePath(path),
+                RegistryError::DuplicatePath(path2)) =>
+                path == path2,
+            (RegistryError::DuplicateClass(class),
+                RegistryError::DuplicateClass(class2)) =>
+                class == class2,
+            (RegistryError::ClassChildNameConflict { class, child },
+                RegistryError::ClassChildNameConflict { class: class2, child: child2 }) =>
+                class == class2 && child == child2,
+            (RegistryError::UnknownClass(class),
+                RegistryError::UnknownClass(class2)) =>
+                class == class2,
+            (RegistryError::NoConstructor(class),
+                RegistryError::NoConstructor(class2)) =>
+                class == class2,
+            (RegistryError::InvalidNumberOfMethodParameters { class, method, expected, received },
+                RegistryError::InvalidNumberOfMethodParameters { class: class2, method: method2, expected: expected2, received: received2 }) =>
+                class == class2 && method == method2 && expected == expected2 && received == received2,
+            (RegistryError::InvalidMethodParameter { class, method, param_index, param_type, .. },
+                RegistryError::InvalidMethodParameter { class: class2, method: method2, param_index: param_index2, param_type: param_type2, .. }) =>
+                class == class2 && method == method2 && param_index == param_index2 && param_type == param_type2,
+            (RegistryError::InvalidCast { pwd, cd, cast_type, expected, got },
+                RegistryError::InvalidCast { pwd: pwd2, cd: cd2, cast_type: cast_type2, expected: expected2, got: got2 }) =>
+                pwd == pwd2 && cd == cd2 && cast_type == cast_type2 && expected == expected2 && got == got2,
+            (RegistryError::InvocationFailure { pwd, cd, class, method, invocation_type, .. },
+                RegistryError::InvocationFailure { pwd: pwd2, cd: cd2, class: class2, method: method2, invocation_type: invocation_type2, .. }) =>
+                pwd == pwd2 && cd == cd2 && class == class2 && method == method2 && invocation_type == invocation_type2,
+            _ => false
+        }
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        !eq(self, other)
     }
 }
 

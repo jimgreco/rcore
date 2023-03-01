@@ -115,6 +115,160 @@ impl fmt::Display for TokenGroup {
     }
 }
 
+pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoContext<'a>)
+                              -> Option<Result<TokenGroup, LexerError>> {
+    let mut in_quotes = false;
+    let mut in_comment = false;
+    let mut in_backslash = false;
+    let mut token = String::new();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut token_cols = 0;
+
+    io_context.column = 1;
+    io_context.line += 1;
+
+    loop {
+        match io_context.next_byte() {
+            Ok(byte) => {
+                match byte {
+                    None => {
+                        // end of file
+                        if in_quotes {
+                            return Some(Err(unterminated_quote(io_context)));
+                        }
+
+                        // add the last token
+                        if !token.is_empty() {
+                            tokens.push(match expand(
+                                user_context, &token, in_quotes, io_context) {
+                                Ok(v) => v,
+                                Err(e) => return Some(Err(e))
+                            });
+                            token.clear();
+                            io_context.column += token_cols;
+                        }
+
+                        if tokens.len() > 0 {
+                            let group = TokenGroup { line: io_context.line, tokens };
+                            return Some(Ok(group));
+                        } else {
+                            return None;
+                        }
+                    }
+                    Some(c) => {
+                        token_cols += 1;
+
+                        if c == b'\n' {
+                            // end of line
+                            if in_quotes {
+                                return Some(Err(unterminated_quote(io_context)));
+                            }
+
+                            // add the last token
+                            if !token.is_empty() {
+                                tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                    Ok(v) => v,
+                                    Err(e) => return Some(Err(e))
+                                });
+                                token.clear();
+                                io_context.column += token_cols;
+                                token_cols = 0;
+                            }
+
+                            // continue to the next line if the last character is a backslash
+                            if !in_backslash && tokens.len() > 0 {
+                                let group = TokenGroup { line: io_context.line, tokens };
+                                return Some(Ok(group));
+                            }
+
+                            io_context.line += 1;
+                            io_context.column = 0;
+                            in_quotes = false;
+                            in_comment = false;
+                            in_backslash = false;
+                        } else if !in_comment {
+                            if in_backslash {
+                                if !in_quotes {
+                                    return Some(Err(invalid_escaped(io_context, c)));
+                                }
+
+                                // special characters that are escaped
+                                if c == b'n' {
+                                    token.push('\n');
+                                } else if c == b'\\' {
+                                    token.push('\\');
+                                } else if c == b'"' {
+                                    token.push('"');
+                                } else {
+                                    return Some(Err(invalid_escaped(io_context, c)));
+                                }
+
+                                in_backslash = false;
+                            } else if c == b'\\' {
+                                // escape the next character or continue to the next line
+                                in_backslash = true;
+                            } else if c == b'"' {
+                                if in_quotes {
+                                    // end quotes
+                                    // include zero length tokens
+                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                        Ok(v) => v,
+                                        Err(e) => return Some(Err(e))
+                                    });
+                                    token.clear();
+                                    io_context.column += token_cols;
+                                    token_cols = 0;
+                                }
+                                in_quotes = !in_quotes
+                            } else if c == b'#' && !in_quotes {
+                                // start of comment
+                                // add the last token
+                                if !token.is_empty() {
+                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                        Ok(v) => v,
+                                        Err(e) => return Some(Err(e))
+                                    });
+                                    token.clear();
+                                    io_context.column += token_cols;
+                                    token_cols = 0;
+                                }
+
+                                in_comment = true;
+                            } else if c.is_ascii_whitespace() {
+                                if in_quotes {
+                                    // include all whitespace in quotes
+                                    token.push(c as char);
+                                } else if !token.is_empty() {
+                                    // end the current token
+                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                        Ok(v) => v,
+                                        Err(e) => return Some(Err(e))
+                                    });
+                                    token.clear();
+                                    io_context.column += token_cols;
+                                    token_cols = 0;
+                                }
+                                // otherwise, ignore whitespace
+                            } else {
+                                // add to the current token
+                                token.push(c as char);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                return Some(Err(LexerError::IoError {
+                    src: io_context.source.to_owned(),
+                    line: io_context.line,
+                    col: io_context.column,
+                    error: e,
+                }));
+            }
+        }
+    }
+}
+
 fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContext)
           -> Result<String, LexerError> {
     let mut first_char = true;
@@ -303,161 +457,6 @@ fn escaped_no_quotes(source: &IoContext) -> LexerError {
         col: source.column,
     }
 }
-
-pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoContext<'a>)
-                              -> Option<Result<TokenGroup, LexerError>> {
-    let mut in_quotes = false;
-    let mut in_comment = false;
-    let mut in_backslash = false;
-    let mut token = String::new();
-    let mut tokens: Vec<String> = Vec::new();
-    let mut token_cols = 0;
-
-    io_context.column = 1;
-    io_context.line += 1;
-
-    loop {
-        match io_context.next_byte() {
-            Ok(byte) => {
-                match byte {
-                    None => {
-                        // end of file
-                        if in_quotes {
-                            return Some(Err(unterminated_quote(io_context)));
-                        }
-
-                        // add the last token
-                        if !token.is_empty() {
-                            tokens.push(match expand(
-                                user_context, &token, in_quotes, io_context) {
-                                Ok(v) => v,
-                                Err(e) => return Some(Err(e))
-                            });
-                            token.clear();
-                            io_context.column += token_cols;
-                        }
-
-                        if tokens.len() > 0 {
-                            let group = TokenGroup { line: io_context.line, tokens };
-                            return Some(Ok(group));
-                        } else {
-                            return None;
-                        }
-                    }
-                    Some(c) => {
-                        token_cols += 1;
-
-                        if c == b'\n' {
-                            // end of line
-                            if in_quotes {
-                                return Some(Err(unterminated_quote(io_context)));
-                            }
-
-                            // add the last token
-                            if !token.is_empty() {
-                                tokens.push(match expand(user_context, &token, in_quotes, io_context) {
-                                    Ok(v) => v,
-                                    Err(e) => return Some(Err(e))
-                                });
-                                token.clear();
-                                io_context.column += token_cols;
-                                token_cols = 0;
-                            }
-
-                            // continue to the next line if the last character is a backslash
-                            if !in_backslash && tokens.len() > 0 {
-                                let group = TokenGroup { line: io_context.line, tokens };
-                                return Some(Ok(group));
-                            }
-
-                            io_context.line += 1;
-                            io_context.column = 0;
-                            in_quotes = false;
-                            in_comment = false;
-                            in_backslash = false;
-                        } else if !in_comment {
-                            if in_backslash {
-                                if !in_quotes {
-                                    return Some(Err(invalid_escaped(io_context, c)));
-                                }
-
-                                // special characters that are escaped
-                                if c == b'n' {
-                                    token.push('\n');
-                                } else if c == b'\\' {
-                                    token.push('\\');
-                                } else if c == b'"' {
-                                    token.push('"');
-                                } else {
-                                    return Some(Err(invalid_escaped(io_context, c)));
-                                }
-
-                                in_backslash = false;
-                            } else if c == b'\\' {
-                                // escape the next character or continue to the next line
-                                in_backslash = true;
-                            } else if c == b'"' {
-                                if in_quotes {
-                                    // end quotes
-                                    // include zero length tokens
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
-                                        Ok(v) => v,
-                                        Err(e) => return Some(Err(e))
-                                    });
-                                    token.clear();
-                                    io_context.column += token_cols;
-                                    token_cols = 0;
-                                }
-                                in_quotes = !in_quotes
-                            } else if c == b'#' && !in_quotes {
-                                // start of comment
-                                // add the last token
-                                if !token.is_empty() {
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
-                                        Ok(v) => v,
-                                        Err(e) => return Some(Err(e))
-                                    });
-                                    token.clear();
-                                    io_context.column += token_cols;
-                                    token_cols = 0;
-                                }
-
-                                in_comment = true;
-                            } else if c.is_ascii_whitespace() {
-                                if in_quotes {
-                                    // include all whitespace in quotes
-                                    token.push(c as char);
-                                } else if !token.is_empty() {
-                                    // end the current token
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
-                                        Ok(v) => v,
-                                        Err(e) => return Some(Err(e))
-                                    });
-                                    token.clear();
-                                    io_context.column += token_cols;
-                                    token_cols = 0;
-                                }
-                                // otherwise, ignore whitespace
-                            } else {
-                                // add to the current token
-                                token.push(c as char);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                return Some(Err(LexerError::IoError {
-                    src: io_context.source.to_owned(),
-                    line: io_context.line,
-                    col: io_context.column,
-                    error: e,
-                }));
-            }
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod tests {

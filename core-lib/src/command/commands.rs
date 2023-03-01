@@ -23,42 +23,13 @@ pub(crate) struct AssignCommand {}
 pub(crate) struct DefaultAssignCommand {}
 
 #[derive(PartialEq)]
-pub(crate) struct UnsetCommand {}
+pub(crate) struct MkDirCommand {}
 
 #[derive(PartialEq)]
 pub(crate) struct SourceCommand {}
 
 #[derive(PartialEq)]
-pub(crate) struct MkDirCommand {}
-
-#[derive(PartialEq)]
-pub(crate) struct CdCommand {}
-
-impl Command for MkDirCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "mkdir" {
-            return if command.tokens.len() == 2 {
-                Ok(true)
-            } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
-            };
-        }
-        Ok(false)
-    }
-
-    fn execute(&self,
-               command: &TokenGroup,
-               user_context: &mut UserContext,
-               _io_context: &mut IoContext,
-               _command_context: &CommandContext,
-               shell: &mut Shell) -> Result<(), ShellError> {
-        shell.registry.mkdir(&user_context.pwd, &command.tokens[1]).map_err(
-            |e| ShellError::RegistryError {
-                command: command.clone(),
-                error: e,
-            })
-    }
-}
+pub(crate) struct UnsetCommand {}
 
 impl Command for AssignCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
@@ -107,22 +78,14 @@ impl Command for DefaultAssignCommand {
     }
 }
 
-impl Command for UnsetCommand {
+impl Command for MkDirCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if &command.tokens[0] == "unset" {
-            let len = command.tokens.len();
-            if len == 1 {
-                return Err(ShellError::InvalidCommandFormat(command.clone()));
-            }
-            for i in 1..len {
-                if !validate_variable(&command.tokens[i]) {
-                    return Err(ShellError::InvalidVariableName {
-                        command: command.clone(),
-                        var: command.tokens[i].to_owned(),
-                    });
-                }
-            }
-            return Ok(true);
+        if command.tokens[0] == "mkdir" {
+            return if command.tokens.len() == 2 {
+                Ok(true)
+            } else {
+                Err(ShellError::InvalidCommandFormat(command.clone()))
+            };
         }
         Ok(false)
     }
@@ -132,13 +95,12 @@ impl Command for UnsetCommand {
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
-               _shell: &mut Shell) -> Result<(), ShellError> {
-        debug!("[Unset] removing variables {}",
-            command.tokens_substring(1, command.tokens.len()));
-        for i in 1..command.tokens.len() {
-            user_context.remove_value(&command.tokens[i]);
-        }
-        Ok(())
+               shell: &mut Shell) -> Result<(), ShellError> {
+        shell.registry.mkdir(&user_context.pwd, &command.tokens[1]).map_err(
+            |e| ShellError::RegistryError {
+                command: command.clone(),
+                error: e,
+            })
     }
 }
 
@@ -206,6 +168,41 @@ impl Command for SourceCommand {
             }
         }
 
+        Ok(())
+    }
+}
+
+impl Command for UnsetCommand {
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
+        if &command.tokens[0] == "unset" {
+            let len = command.tokens.len();
+            if len == 1 {
+                return Err(ShellError::InvalidCommandFormat(command.clone()));
+            }
+            for i in 1..len {
+                if !validate_variable(&command.tokens[i]) {
+                    return Err(ShellError::InvalidVariableName {
+                        command: command.clone(),
+                        var: command.tokens[i].to_owned(),
+                    });
+                }
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn execute(&self,
+               command: &TokenGroup,
+               user_context: &mut UserContext,
+               _io_context: &mut IoContext,
+               _command_context: &CommandContext,
+               _shell: &mut Shell) -> Result<(), ShellError> {
+        debug!("[Unset] removing variables {}",
+            command.tokens_substring(1, command.tokens.len()));
+        for i in 1..command.tokens.len() {
+            user_context.remove_value(&command.tokens[i]);
+        }
         Ok(())
     }
 }
