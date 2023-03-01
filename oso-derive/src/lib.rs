@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{
-    Attribute, Data, DataEnum, DataStruct, Fields, Lit, Meta, MetaNameValue, NestedMeta, Path
+    Attribute, Data, DataEnum, DataStruct, Fields, Lit, Meta, MetaNameValue, NestedMeta, Path,
 };
 
 #[derive(Debug, PartialEq)]
