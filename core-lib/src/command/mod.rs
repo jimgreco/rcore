@@ -1,7 +1,6 @@
 mod commands;
 mod lexer;
 mod oso;
-mod parser;
 mod registry;
 mod shell;
 mod context;

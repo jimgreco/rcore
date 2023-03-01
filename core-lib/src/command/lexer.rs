@@ -11,7 +11,7 @@ pub enum LexerError {
     UnterminatedQuote {
         src: String,
         line: usize,
-        col: usize
+        col: usize,
     },
     #[error("{src}:{line}:{col}: the escaped character is not in quotes")]
     EscapedCharacterNotInQuotes {
@@ -24,51 +24,51 @@ pub enum LexerError {
         src: String,
         line: usize,
         col: usize,
-        char: String
+        char: String,
     },
     #[error("{src}:{line}:{col}: {var} is an unknown variable")]
     UnknownVariable {
         src: String,
         line: usize,
         col: usize,
-        var: String
+        var: String,
     },
     #[error("{src}:{line}:{col}: the variable is in an unknown format")]
     InvalidVariableFormat {
         src: String,
         line: usize,
-        col: usize
+        col: usize,
     },
     #[error("{src}:{line}:{col}: I/O error: {error}")]
-    Io {
+    IoError {
         src: String,
         line: usize,
         col: usize,
-        error: io::Error
-    }
+        error: io::Error,
+    },
 }
 
 impl PartialEq for LexerError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (LexerError::UnterminatedQuote { src, line, col},
-                LexerError::UnterminatedQuote { src: src2, line: line2, col: col2})
-                => src == src2 && line == line2 && col == col2,
-            (LexerError::EscapedCharacterNotInQuotes { src, line, col},
-                LexerError::EscapedCharacterNotInQuotes { src: src2, line: line2, col: col2})
-                => src == src2 && line == line2 && col == col2,
-            (LexerError::InvalidEscapedCharacterFormat { src, line, col, char},
-                LexerError::InvalidEscapedCharacterFormat { src: src2, line: line2, col: col2, char: char2})
-                => src == src2 && line == line2 && col == col2 && char == char2,
-            (LexerError::UnknownVariable { src, line, col, var},
-                LexerError::UnknownVariable { src: src2, line: line2, col: col2, var: var2})
-                => src == src2 && line == line2 && col == col2 && var == var2,
-            (LexerError::InvalidVariableFormat { src, line, col},
-                LexerError::InvalidVariableFormat { src: src2, line: line2, col: col2})
-                => src == src2 && line == line2 && col == col2,
-            (LexerError::Io { src, line, col, ..},
-                LexerError::Io { src: src2, line: line2, col: col2, ..})
-                => src == src2 && line == line2 && col == col2,
+            (LexerError::UnterminatedQuote { src, line, col },
+                LexerError::UnterminatedQuote { src: src2, line: line2, col: col2 })
+            => src == src2 && line == line2 && col == col2,
+            (LexerError::EscapedCharacterNotInQuotes { src, line, col },
+                LexerError::EscapedCharacterNotInQuotes { src: src2, line: line2, col: col2 })
+            => src == src2 && line == line2 && col == col2,
+            (LexerError::InvalidEscapedCharacterFormat { src, line, col, char },
+                LexerError::InvalidEscapedCharacterFormat { src: src2, line: line2, col: col2, char: char2 })
+            => src == src2 && line == line2 && col == col2 && char == char2,
+            (LexerError::UnknownVariable { src, line, col, var },
+                LexerError::UnknownVariable { src: src2, line: line2, col: col2, var: var2 })
+            => src == src2 && line == line2 && col == col2 && var == var2,
+            (LexerError::InvalidVariableFormat { src, line, col },
+                LexerError::InvalidVariableFormat { src: src2, line: line2, col: col2 })
+            => src == src2 && line == line2 && col == col2,
+            (LexerError::IoError { src, line, col, .. },
+                LexerError::IoError { src: src2, line: line2, col: col2, .. })
+            => src == src2 && line == line2 && col == col2,
             _ => false
         }
     }
@@ -255,7 +255,7 @@ fn unterminated_quote(source: &IoContext) -> LexerError {
     LexerError::UnterminatedQuote {
         src: source.source.to_owned(),
         line: source.line,
-        col: source.column
+        col: source.column,
     }
 }
 
@@ -275,7 +275,7 @@ fn unknown_var(source: &IoContext, variable: &str) -> LexerError {
         src: source.source.to_owned(),
         line: source.line,
         col: source.column,
-        var: variable.to_owned()
+        var: variable.to_owned(),
     }
 }
 
@@ -284,7 +284,7 @@ fn unknown_arg(source: &IoContext, argument: usize) -> LexerError {
         src: source.source.to_owned(),
         line: source.line,
         col: source.column,
-        var: argument.to_string()
+        var: argument.to_string(),
     }
 }
 
@@ -292,7 +292,7 @@ fn invalid_var_format(source: &IoContext) -> LexerError {
     LexerError::InvalidVariableFormat {
         src: source.source.to_owned(),
         line: source.line,
-        col: source.column
+        col: source.column,
     }
 }
 
@@ -300,7 +300,7 @@ fn escaped_no_quotes(source: &IoContext) -> LexerError {
     LexerError::EscapedCharacterNotInQuotes {
         src: source.source.to_owned(),
         line: source.line,
-        col: source.column
+        col: source.column,
     }
 }
 
@@ -447,12 +447,12 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                 }
             }
             Err(e) => {
-                return Some(Err(LexerError::Io {
+                return Some(Err(LexerError::IoError {
                     src: io_context.source.to_owned(),
                     line: io_context.line,
                     col: io_context.column,
-                    error: e
-                }))
+                    error: e,
+                }));
             }
         }
     }
@@ -462,7 +462,7 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::io::{Cursor, Read};
+    use std::io::{Cursor};
     use crate::command::context::{UserContext, IoContext};
     use crate::command::lexer::{lex_command, LexerError, TokenGroup};
 
@@ -477,10 +477,6 @@ mod tests {
         }
     }
 
-    pub(crate) fn cursor(text: &'static str) -> Box<dyn Read> {
-        Box::new(Cursor::new(text.as_bytes()))
-    }
-    
     #[test]
     fn print_debug_command() {
         let text = "create $wtf/bar me
@@ -493,7 +489,7 @@ mod tests {
         context.add_argument("testing123");
         context.add_argument("testing456");
         context.set_value("wtf", "foo");
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
 
@@ -511,7 +507,7 @@ mod tests {
 
 
         ";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -524,7 +520,7 @@ mod tests {
     #[test]
     fn quotes_not_terminated_at_end_of_file_throws_error() {
         let text = "foo \"bar me";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -532,7 +528,9 @@ mod tests {
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
         assert_eq!(LexerError::UnterminatedQuote {
-            src: "test".to_owned(), line: 1, col: 5
+            src: "test".to_owned(),
+            line: 1,
+            col: 5,
         }, result);
     }
 
@@ -540,7 +538,7 @@ mod tests {
     fn quotes_not_terminated_at_end_of_line_throws_error() {
         let text = "foo \"bar me
         hey there";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -548,14 +546,16 @@ mod tests {
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
         assert_eq!(LexerError::UnterminatedQuote {
-            src: "test".to_owned(), line: 1, col: 5
+            src: "test".to_owned(),
+            line: 1,
+            col: 5,
         }, result);
     }
 
     #[test]
     fn invalid_escaped_character_throws_error() {
         let text = "foo \"b\\^br\" me";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -563,14 +563,17 @@ mod tests {
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
         assert_eq!(LexerError::InvalidEscapedCharacterFormat {
-            src: "test".to_owned(), line: 1, col: 5, char: "\\^".to_owned()
+            src: "test".to_owned(),
+            line: 1,
+            col: 5,
+            char: "\\^".to_owned(),
         }, result);
     }
 
     #[test]
     fn escaped_characters() {
         let text = "foo \"bar \\n me \\\" now \\\\ abc \"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -583,7 +586,7 @@ mod tests {
     #[test]
     fn single_command_is_processed() {
         let text = "foo bar";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -600,7 +603,7 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -623,7 +626,7 @@ mod tests {
         \"Jojo left his home\" in \"Tuscon, Arizona\"
 
         ";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -640,7 +643,7 @@ mod tests {
     #[test]
     fn whitespace_is_ignored() {
         let text = "   foo     bar  ";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -657,7 +660,7 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner \
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -674,7 +677,7 @@ mod tests {
     #[test]
     fn empty_quotes_can_be_a_token() {
         let text = "foo \"\" bar";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -692,7 +695,7 @@ mod tests {
     #[test]
     fn backslash_not_in_quotes_is_error() {
         let text = "back\\\"slash";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -701,7 +704,10 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::InvalidEscapedCharacterFormat {
-            src: "test".to_owned(), line: 1, col: 1, char: "\\\"".to_owned()
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
+            char: "\\\"".to_owned(),
         }, result);
     }
 
@@ -710,7 +716,7 @@ mod tests {
         let text = "Jojo was a man who thought he was a loner
         #But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -728,7 +734,7 @@ mod tests {
         let text = "Jojo was a man # who thought he was a loner
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let context = UserContext::default();
@@ -745,7 +751,7 @@ mod tests {
     #[test]
     fn one_position_argument() {
         let text = "$0";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -760,7 +766,7 @@ mod tests {
     #[test]
     fn position_argument_outside_quotes_is_error() {
         let text = "Jojo$0";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -770,14 +776,16 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, commands);
     }
 
     #[test]
     fn multiple_position_arguments_not_in_quotes_is_an_error() {
         let text = "$0$1";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -788,14 +796,16 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, commands);
     }
 
     #[test]
     fn multiple_position_arguments_inside_quotes() {
         let text = "\"$0$1\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -811,7 +821,7 @@ mod tests {
     #[test]
     fn position_argument_can_be_anywhere_in_string_when_inside_quotes() {
         let text = "\"Jojo$0\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -826,7 +836,7 @@ mod tests {
     #[test]
     fn unknown_position_argument_is_error() {
         let text = "$1";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -836,14 +846,17 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::UnknownVariable {
-            src: "test".to_owned(), line: 1, col: 1, var: "1".to_owned()
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
+            var: "1".to_owned(),
         }, result);
     }
 
     #[test]
     fn multiple_position_arguments() {
         let text = "\"$0 $1\" $2";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -861,7 +874,7 @@ mod tests {
     #[test]
     fn curly_brackets_can_be_used_to_separate_position_arguments_from_numbers() {
         let text = "\"${0}345\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -876,7 +889,7 @@ mod tests {
     #[test]
     fn one_variable() {
         let text = "$foo";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -891,7 +904,7 @@ mod tests {
     #[test]
     fn variable_outside_quotes_is_error() {
         let text = "Jojo$foo";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -901,14 +914,16 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, result);
     }
 
     #[test]
     fn variable_can_be_anywhere_in_string_when_inside_quotes() {
         let text = "\"Jojo$foo\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -923,7 +938,7 @@ mod tests {
     #[test]
     fn unknown_variable_is_error() {
         let text = "$1";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -933,14 +948,17 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::UnknownVariable {
-            src: "test".to_owned(), line: 1, col: 1, var: "1".to_owned()
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
+            var: "1".to_owned(),
         }, result);
     }
 
     #[test]
     fn multiple_variables() {
         let text = "\"$foo $bar\" $me";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -958,7 +976,7 @@ mod tests {
     #[test]
     fn multiple_variables_not_in_quotes_is_an_error() {
         let text = "$foo$bar";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -969,14 +987,16 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, result);
     }
 
     #[test]
     fn multiple_variables_inside_quotes() {
         let text = "\"$foo$bar\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -992,7 +1012,7 @@ mod tests {
     #[test]
     fn curly_brackets_can_be_used_to_separate_variables_from_text() {
         let text = "\"${foo}his home\"";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -1007,7 +1027,7 @@ mod tests {
     #[test]
     fn unterminated_curly_bracket_is_error() {
         let text = "${foo";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -1017,14 +1037,16 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, result);
     }
 
     #[test]
     fn invalid_character_in_first_part_of_variable_is_error() {
         let text = "$@foo";
-        let mut cursor = cursor(text);
+        let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
         let mut context = UserContext::default();
@@ -1034,7 +1056,9 @@ mod tests {
             .unwrap().err().unwrap();
 
         assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(), line: 1, col: 1
+            src: "test".to_owned(),
+            line: 1,
+            col: 1,
         }, result);
     }
 }

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::io;
+use crate::command::commands::{AssignCommand, Command, DefaultAssignCommand, SourceCommand, UnsetCommand};
 
 #[derive(Default, Clone)]
 pub struct UserContext {
     pub pwd: String,
     pub variables: HashMap<String, String>,
-    arguments: Vec<String>
+    arguments: Vec<String>,
 }
 
 impl UserContext {
@@ -56,7 +57,7 @@ pub struct IoContext<'a> {
     pub column: usize,
     pub input: &'a mut dyn Read,
     pub output: &'a mut dyn Write,
-    buffer: [u8; 1]
+    buffer: [u8; 1],
 }
 
 impl<'a> IoContext<'a> {
@@ -67,7 +68,7 @@ impl<'a> IoContext<'a> {
             column: 0,
             input,
             output,
-            buffer: [0]
+            buffer: [0],
         }
     }
 
@@ -83,5 +84,24 @@ impl<'a> IoContext<'a> {
 
     pub(crate) fn write_str(&mut self, string: &str) -> Result<(), io::Error> {
         self.output.write_all(string.as_bytes())
+    }
+}
+
+pub struct CommandContext {
+    pub(crate) commands: Vec<Box<dyn Command>>,
+}
+
+impl CommandContext {
+    pub fn new() -> Self {
+        CommandContext {
+            commands: vec![Box::new(AssignCommand {}),
+                           Box::new(DefaultAssignCommand {}),
+                           Box::new(UnsetCommand {}),
+                           Box::new(SourceCommand {})],
+        }
+    }
+
+    pub fn add_command(&mut self, spec: Box<dyn Command>) {
+        self.commands.push(spec);
     }
 }
