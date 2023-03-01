@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::io;
 use crate::command::commands::{AssignCommand, Command, DefaultAssignCommand, SourceCommand, UnsetCommand};
+use crate::command::shell::ShellError;
 
 #[derive(Default, Clone)]
 pub struct UserContext {
@@ -60,6 +61,7 @@ pub struct IoContext<'a> {
     buffer: [u8; 1],
 }
 
+// TODO: we need to support writing multiple formats including text and JSON
 impl<'a> IoContext<'a> {
     pub fn new(name: &'a str, input: &'a mut dyn Read, output: &'a mut dyn Write) -> Self {
         IoContext {
@@ -82,8 +84,8 @@ impl<'a> IoContext<'a> {
         }
     }
 
-    pub(crate) fn write_str(&mut self, string: &str) -> Result<(), io::Error> {
-        self.output.write_all(string.as_bytes())
+    pub(crate) fn write_str(&mut self, string: &str) -> Result<(), ShellError> {
+        self.output.write_all(string.as_bytes()).map_err(|e| ShellError::IoError(e))
     }
 }
 
