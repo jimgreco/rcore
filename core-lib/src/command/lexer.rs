@@ -40,7 +40,7 @@ pub enum LexerError {
         col: usize
     },
     #[error("{src}:{line}:{col}: I/O error: {error}")]
-    IoError {
+    Io {
         src: String,
         line: usize,
         col: usize,
@@ -66,8 +66,8 @@ impl PartialEq for LexerError {
             (LexerError::InvalidVariableFormat { src, line, col},
                 LexerError::InvalidVariableFormat { src: src2, line: line2, col: col2})
                 => src == src2 && line == line2 && col == col2,
-            (LexerError::IoError { src, line, col, ..},
-                LexerError::IoError { src: src2, line: line2, col: col2, ..})
+            (LexerError::Io { src, line, col, ..},
+                LexerError::Io { src: src2, line: line2, col: col2, ..})
                 => src == src2 && line == line2 && col == col2,
             _ => false
         }
@@ -82,6 +82,23 @@ impl PartialEq for LexerError {
 pub struct TokenGroup {
     pub line: usize,
     pub tokens: Vec<String>,
+}
+
+impl TokenGroup {
+    pub fn tokens_string(&self) -> String {
+        let mut str = "".to_owned();
+        let mut first = true;
+        for token in &self.tokens {
+            if !first {
+                str.push(' ');
+            }
+            first = false;
+            str.push('\"');
+            str.push_str(token);
+            str.push('\"');
+        }
+        str
+    }
 }
 
 impl fmt::Display for TokenGroup {
@@ -437,7 +454,7 @@ pub(crate) fn lex_command<'a>(context: &Context, source: &mut Source<'a>)
                 }
             }
             Err(e) => {
-                return Some(Err(LexerError::IoError {
+                return Some(Err(LexerError::Io {
                     src: source.source.to_owned(),
                     line: source.line,
                     col: source.column,
@@ -451,7 +468,6 @@ pub(crate) fn lex_command<'a>(context: &Context, source: &mut Source<'a>)
 
 #[cfg(test)]
 mod tests {
-    use std::io;
     use crate::command::context::{Context, Source};
     use crate::command::lexer::{lex_all_commands, lex_command, LexerError};
     
@@ -468,7 +484,7 @@ mod tests {
         context.add_argument("testing456");
         context.set_value("wtf", "foo");
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
 
         loop {
@@ -486,7 +502,7 @@ mod tests {
 
         ";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -499,7 +515,7 @@ mod tests {
     fn quotes_not_terminated_at_end_of_file_throws_error() {
         let text = "foo \"bar me";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -515,7 +531,7 @@ mod tests {
         let text = "foo \"bar me
         hey there";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -530,7 +546,7 @@ mod tests {
     fn invalid_escaped_character_throws_error() {
         let text = "foo \"b\\^br\" me";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -545,7 +561,7 @@ mod tests {
     fn escaped_characters() {
         let text = "foo \"bar \\n me \\\" now \\\\ abc \"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -558,7 +574,7 @@ mod tests {
     fn single_command_is_processed() {
         let text = "foo bar";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -575,7 +591,7 @@ mod tests {
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -598,7 +614,7 @@ mod tests {
 
         ";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -615,7 +631,7 @@ mod tests {
     fn whitespace_is_ignored() {
         let text = "   foo     bar  ";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -632,7 +648,7 @@ mod tests {
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -649,7 +665,7 @@ mod tests {
     fn empty_quotes_can_be_a_token() {
         let text = "foo \"\" bar";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -667,7 +683,7 @@ mod tests {
     fn backslash_not_in_quotes_is_error() {
         let text = "back\\\"slash";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -685,7 +701,7 @@ mod tests {
         #But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -703,7 +719,7 @@ mod tests {
         But he \"knew it couldn't\" last
         \"Jojo left his home\" in \"Tuscon, Arizona\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let context = Context::default();
 
@@ -720,7 +736,7 @@ mod tests {
     fn one_position_argument() {
         let text = "$0";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument("Jojo left his home");
@@ -735,7 +751,7 @@ mod tests {
     fn position_argument_outside_quotes_is_error() {
         let text = "Jojo$0";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument(" left his home");
@@ -752,7 +768,7 @@ mod tests {
     fn multiple_position_arguments_not_in_quotes_is_an_error() {
         let text = "$0$1";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument("Jojo");
@@ -770,7 +786,7 @@ mod tests {
     fn multiple_position_arguments_inside_quotes() {
         let text = "\"$0$1\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument("Jojo");
@@ -786,7 +802,7 @@ mod tests {
     fn position_argument_can_be_anywhere_in_string_when_inside_quotes() {
         let text = "\"Jojo$0\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument(" left his home");
@@ -801,7 +817,7 @@ mod tests {
     fn unknown_position_argument_is_error() {
         let text = "$1";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument(" left his home");
@@ -818,7 +834,7 @@ mod tests {
     fn multiple_position_arguments() {
         let text = "\"$0 $1\" $2";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument("Jojo");
@@ -836,7 +852,7 @@ mod tests {
     fn curly_brackets_can_be_used_to_separate_position_arguments_from_numbers() {
         let text = "\"${0}345\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument("12");
@@ -851,7 +867,7 @@ mod tests {
     fn one_variable() {
         let text = "$foo";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo left his home");
@@ -866,7 +882,7 @@ mod tests {
     fn variable_outside_quotes_is_error() {
         let text = "Jojo$foo";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", " left his home");
@@ -883,7 +899,7 @@ mod tests {
     fn variable_can_be_anywhere_in_string_when_inside_quotes() {
         let text = "\"Jojo$foo\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", " left his home");
@@ -898,7 +914,7 @@ mod tests {
     fn unknown_variable_is_error() {
         let text = "$1";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.add_argument(" left his home");
@@ -915,7 +931,7 @@ mod tests {
     fn multiple_variables() {
         let text = "\"$foo $bar\" $me";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo");
@@ -933,7 +949,7 @@ mod tests {
     fn multiple_variables_not_in_quotes_is_an_error() {
         let text = "$foo$bar";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo left");
@@ -951,7 +967,7 @@ mod tests {
     fn multiple_variables_inside_quotes() {
         let text = "\"$foo$bar\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo left");
@@ -967,7 +983,7 @@ mod tests {
     fn curly_brackets_can_be_used_to_separate_variables_from_text() {
         let text = "\"${foo}his home\"";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo left ");
@@ -982,7 +998,7 @@ mod tests {
     fn unterminated_curly_bracket_is_error() {
         let text = "${foo";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("foo", "Jojo left ");
@@ -999,7 +1015,7 @@ mod tests {
     fn invalid_character_in_first_part_of_variable_is_error() {
         let text = "$@foo";
         let mut cursor = Source::cursor(text);
-        let mut sink = Source::sink();
+        let mut sink = Source::stdout();
         let mut source = Source::new_test(&mut cursor, &mut sink);
         let mut context = Context::default();
         context.set_value("f@oo", "Jojo left ");

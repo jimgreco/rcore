@@ -1,15 +1,13 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, stdout, Write};
 use std::io;
-use crate::command::commands::ExecutableCommandSpec;
+use crate::command::lexer::TokenGroup;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Context {
-    debug: bool,
     pwd: String,
     variables: HashMap<String, String>,
-    arguments: Vec<String>,
-    command_specs: Vec<Box<dyn ExecutableCommandSpec>>
+    arguments: Vec<String>
 }
 
 impl Context {
@@ -43,14 +41,6 @@ impl Context {
             self.variables.insert(key.to_owned(), value.to_owned());
         }
     }
-
-    pub(crate) fn get_command_specs(&self) -> &Vec<Box<dyn ExecutableCommandSpec>> {
-        &self.command_specs
-    }
-
-    pub(crate) fn add_command_spec(&mut self, spec: Box<dyn ExecutableCommandSpec>) {
-        self.command_specs.push(spec);
-    }
 }
 
 pub(crate) struct Source<'a> {
@@ -74,16 +64,16 @@ impl<'a> Source<'a> {
         }
     }
 
-    pub(crate) fn cursor(text: &str) -> Box<dyn Read> {
-        Box::new(Cursor::new(text.to_string().into_bytes()))
-    }
-
-    pub(crate) fn sink() -> Box<dyn Write> {
-        Box::new(io::sink())
-    }
-
     pub(crate) fn new_test(input: &'a mut dyn Read, output: &'a mut dyn Write) -> Self {
         Self::new("test", input, output)
+    }
+
+    pub(crate) fn cursor(text: &'static str) -> Box<dyn Read> {
+        Box::new(Cursor::new(text.as_bytes()))
+    }
+
+    pub(crate) fn stdout() -> Box<dyn Write> {
+        Box::new( stdout())
     }
 
     pub(crate) fn next_byte(&mut self) -> Result<Option<u8>, io::Error> {
@@ -94,5 +84,9 @@ impl<'a> Source<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    pub(crate) fn write_str(&mut self, string: &str) -> Result<(), io::Error> {
+        self.output.write_all(string.as_bytes())
     }
 }
