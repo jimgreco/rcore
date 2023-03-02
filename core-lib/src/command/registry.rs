@@ -37,8 +37,8 @@ pub struct Registry {
     root_id: usize,
 }
 
-impl Registry {
-    pub fn new() -> Registry {
+impl Default for Registry {
+    fn default() -> Self {
         let mut host = Host::new();
         for class in builtins::classes() {
             host.cache_class(class).expect("builtins failed");
@@ -62,7 +62,9 @@ impl Registry {
         });
         reg
     }
+}
 
+impl Registry {
     pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         let class_name = class.fq_name.to_owned();
 
@@ -208,7 +210,7 @@ impl Registry {
     ///
     /// ```
     /// use core::command::Registry;
-    /// let mut registry = Registry::new();
+    /// let mut registry = Registry::default();
     /// registry.mkdir("/foo/bar", "soo");
     /// assert_eq!("/foo/bar/soo", registry.path("/foo/bar/soo").unwrap().full_path);
     /// ```
@@ -785,7 +787,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_absolute_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/bar/me", "/foo").unwrap();
 
         registry.mkdir("/foo", "/bar/soo").unwrap();
@@ -796,7 +798,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_creates_child_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
 
         registry.mkdir("/", "foo").unwrap();
 
@@ -809,7 +811,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_creates_grandchild_directories() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
 
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
@@ -849,7 +851,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_from_child() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "../soo").unwrap();
@@ -860,7 +862,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_absolute_path_from_child_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "/soo").unwrap();
@@ -871,7 +873,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_current_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "./soo").unwrap();
@@ -882,7 +884,7 @@ mod path_tests {
 
     #[test]
     fn mkdir_with_empty_directories() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "soo///doo").unwrap();
@@ -893,7 +895,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_parent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "..").unwrap();
@@ -903,7 +905,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_grandparent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../").unwrap();
@@ -913,7 +915,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_great_grandparent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../../").unwrap();
@@ -923,7 +925,7 @@ mod path_tests {
 
     #[test]
     fn cd_beyond_root_is_error() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "../../../..").err().unwrap();
@@ -937,7 +939,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_unknown_directory_is_error() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "doo").err().unwrap();
@@ -985,7 +987,7 @@ mod registry_tests {
     }
 
     fn create_registry() -> Registry {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string"])
             .build()).unwrap();
@@ -1192,7 +1194,7 @@ mod registry_tests {
     }
 
     fn create_registry2() -> Registry {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         let bar_class = Bar::get_polar_class_builder()
             .set_constructor(Bar::default, vec![])
             .build();

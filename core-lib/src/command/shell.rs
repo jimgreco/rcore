@@ -7,17 +7,12 @@ use thiserror::Error;
 use crate::command::{Registry, RegistryError};
 use crate::command::oso::Class;
 
+#[derive(Default)]
 pub struct Shell {
     pub(crate) registry: Registry,
 }
 
 impl Shell {
-    pub fn new() -> Self {
-        Shell {
-            registry: Registry::new()
-        }
-    }
-
     pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         self.registry.cache_class(class)
     }
@@ -129,7 +124,7 @@ mod tests {
     use crate::command::shell::{Shell, ShellError};
 
     fn setup() -> (Shell, CommandContext, UserContext) {
-        (Shell::new(), CommandContext::new(), UserContext::new())
+        (Shell::default(), CommandContext::new(), UserContext::new())
     }
 
     #[test]

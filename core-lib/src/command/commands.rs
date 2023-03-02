@@ -540,7 +540,7 @@ mod assign_tests {
     fn execute_assignment_command() {
         let mut context = UserContext::new();
         let command = AssignCommand {};
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let command_context = CommandContext::new();
@@ -608,7 +608,7 @@ mod default_assign_tests {
     #[test]
     fn execute_default_assignment_command_sets_new_value() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut source = IoContext::new("test", &mut input, &mut output);
@@ -629,7 +629,7 @@ mod default_assign_tests {
     fn execute_default_assignment_command_already_there_doesnt_replace() {
         let mut context = UserContext::new();
         context.set_value("foo", "soo");
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut source = IoContext::new("test", &mut input, &mut output);
@@ -725,7 +725,7 @@ mod unset_tests {
         context.set_value("foo", "bar");
         context.set_value("soo", "doo");
         context.set_value("goo", "boo");
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
@@ -793,7 +793,7 @@ mod mkdir_tests {
     #[test]
     fn mkdir_creates_new_directories() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
@@ -862,7 +862,7 @@ mod cd_tests {
     #[test]
     fn cd_navigates_to_new_directory() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
@@ -931,7 +931,7 @@ mod echo_tests {
     #[test]
     fn echo_command_writes_tokens_to_output() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
@@ -1029,7 +1029,7 @@ mod create_tests {
     #[test]
     fn execute_create_command() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
             .build()).unwrap();
@@ -1061,7 +1061,7 @@ mod create_tests {
     #[test]
     fn execute_create_command_with_wrong_data_type_is_an_era() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["int", "string"])
             .build()).unwrap();
@@ -1130,7 +1130,7 @@ mod execute_tests {
     #[test]
     fn execute_method() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
             .add_method("add_one", User::add_one, vec!["int"], Some("add"))
@@ -1168,7 +1168,7 @@ mod execute_tests {
     #[test]
     fn execute_method_with_incorrect_data_type_is_error() {
         let mut context = UserContext::new();
-        let mut shell = Shell::new();
+        let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
             .add_method("add_one", User::add_one, vec!["int"], Some("add"))
