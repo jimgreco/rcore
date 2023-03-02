@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::io;
-use crate::command::commands::{
-    AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand,
-    ExecuteCommand, MkDirCommand, SourceCommand, UnsetCommand};
+use crate::command::commands::{AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand, ExecuteCommand, LsCommand, MkDirCommand, PwdCommand, SourceCommand, UnsetCommand};
 use crate::command::shell::ShellError;
 
 #[derive(Clone)]
@@ -13,15 +11,17 @@ pub struct UserContext {
     arguments: Vec<String>,
 }
 
-impl UserContext {
-    pub fn new() -> UserContext {
+impl Default for UserContext {
+    fn default() -> Self {
         UserContext {
             pwd: "/".to_owned(),
             variables: HashMap::default(),
             arguments: vec![]
         }
     }
+}
 
+impl UserContext {
     pub(crate) fn set_pwd(&mut self, pwd: &str) {
         self.pwd.clear();
         self.pwd.push_str(pwd);
@@ -104,25 +104,30 @@ impl<'a> IoContext<'a> {
 }
 
 pub struct CommandContext {
-    pub(crate) commands: Vec<Box<dyn Command>>,
+    pub(crate) builtin_commands: Vec<Box<dyn Command>>,
+    pub(crate) execute_command: Box<dyn Command>
+}
+
+impl Default for CommandContext {
+    fn default() -> Self {
+        CommandContext {
+            builtin_commands: vec![Box::new(AssignCommand {}),
+                                   Box::new(CdCommand {}),
+                                   Box::new(CreateCommand {}),
+                                   Box::new(DefaultAssignCommand {}),
+                                   Box::new(EchoCommand {}),
+                                   Box::new(LsCommand {}),
+                                   Box::new(MkDirCommand {}),
+                                   Box::new(PwdCommand {}),
+                                   Box::new(SourceCommand {}),
+                                   Box::new(UnsetCommand {})],
+            execute_command: Box::new(ExecuteCommand {}),
+        }
+    }
 }
 
 impl CommandContext {
-    pub fn new() -> Self {
-        CommandContext {
-            commands: vec![Box::new(AssignCommand {}),
-                           Box::new(CdCommand {}),
-                           Box::new(CreateCommand {}),
-                           Box::new(DefaultAssignCommand {}),
-                           Box::new(EchoCommand {}),
-                           Box::new(ExecuteCommand {}),
-                           Box::new(MkDirCommand {}),
-                           Box::new(SourceCommand {}),
-                           Box::new(UnsetCommand {})],
-        }
-    }
-
     pub fn add_command(&mut self, spec: Box<dyn Command>) {
-        self.commands.push(spec);
+        self.builtin_commands.push(spec);
     }
 }

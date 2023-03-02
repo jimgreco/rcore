@@ -55,7 +55,7 @@ pub struct Class {
     /// Instance methods on `T` that expect a list of `PolarValue`s, and an instance of `&T`
     pub instance_methods: InstanceMethods,
     /// Class methods on `T`
-    pub class_methods: ClassMethods,
+    class_methods: ClassMethods,
 
     /// A function that accepts arguments of this class and compares them for equality.
     /// Limitation: Only works on comparisons of the same type.

@@ -7,16 +7,131 @@ use thiserror::Error;
 use crate::command::{Registry, RegistryError};
 use crate::command::oso::Class;
 
+/// The command shell is used to dynamically instantiate instances of structs, invoke methods on
+/// instances, and get the attribute values from instances at startup or run-time.
+/// Similar to the Unix shell, instances, methods, and attributes are stored in a directory
+/// structure that can be accessed or invoked through text-based commands.
+///
+/// # Variables
+/// The shell supports variables for use in commands.
+///
+/// - `<var> = <value>`: assigns a value to a variable
+/// - `<var> := <value>`: assigns a value to a variable if it does not yet exist
+/// - `unset <var> [var ...]`: removes a variable from the shell
+/// - `echo [arg ...]`: writes back the provided arguments
+///
+/// Variables can only contain alphanumeric or underscore characters and must start with an
+/// alphabetic or underscore character.
+/// Variables can be accessed in other commands with the `$` sign.
+///
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string(
+///     "v1 = abc                # v1 = abc
+///      v1 := def               # v1 = abc (already has value, not overridden)
+///      v2 := hij               # v2 = hij
+///      v2 = klm                # v2 = klm (overridden)
+///      v3 := \"nop   qrs\"     # v3 = nop, quotes allow for spaces in values
+///      echo $v1 $v2 $v3").unwrap();
+///
+/// assert_eq!("abc klm nop   qrs", &result);
+/// ```
+///
+/// # Built-in Commands
+/// The following commands are built into the shell to facilitate the creation and navigation of the
+/// directory structure, echoing back arguments, and loading command files.
+///
+/// - `cd <dir>`: changes the current working directory of the user
+/// - `ls [dir]`: lists the contents of the current user directory
+/// - `pwd`: the current working directory of the user
+/// - `mkdir <dir>`: creates a new directory
+///
+/// ```
+/// let (result, user_context) = rcore::command::Shell::from_string(
+///     "mkdir /foo/bar    # pwd = /
+///      cd foo/bar        # pwd = /foo/bar
+///      mkdir me
+///      cd me             # pwd = /foo/bar/me
+///      cd ../..          # pwd = /foo
+///      pwd").unwrap();
+///
+/// assert_eq!("/foo", &user_context.pwd);
+/// assert_eq!("/foo", &result);
+/// ```
+///
+/// # Loading Commands Files
+/// The commands provided to the Shell can take any format that implements the [io::Read] interface.
+/// Commands files can be loaded from the filesystem with the `source` command.
+///
+/// - `source [-s] <file> [arg ...]`: loads a commands file. The `-s`
+///
+/// ```
+/// use std::fs::File;
+/// use std::io::Write;
+///
+/// let mut file = File::create("/tmp/from_a_file1.commands").unwrap();
+/// file.write_all(
+///     "mkdir /foo/bar/me
+///      cd foo/bar".as_bytes()).unwrap();
+/// let mut file = File::create("/tmp/from_a_file2.commands").unwrap();
+/// file.write_all(
+///     "mkdir /do/re/me
+///      cd /do/re".as_bytes()).unwrap();
+/// let (result, user_context) = rcore::command::Shell::from_string(
+///     "source /tmp/from_a_file1.commands
+///      source -s /tmp/from_a_file2.commands  # sub-shell does not affect user state
+///      cd me
+///      pwd").unwrap();
+///
+/// assert_eq!("/foo/bar/me", &user_context.pwd);
+/// assert_eq!("/foo/bar/me", &result);
+/// ```
+///
+/// # Instance Commands
+/// The primary usage of the command shell is to create instances of structs and invoke methods on
+/// or retrieve the value of attributes from those instances.
+///
+/// - `create <dir> <struct_name> [arg ...]`: instantiates an instance of a struct
+/// - `</path/to/method_or_attribute> [arg ...]`: invokes a method or retrieves the value of an
+///    attribute
+///
+/// The user can configure the [CommandContext] with user-defined commands.
 #[derive(Default)]
 pub struct Shell {
-    pub(crate) registry: Registry,
+    /// The command registry.
+    pub registry: Registry,
 }
 
 impl Shell {
+    /// Caches a [Class] which describes a struct, a function to create instances ("constructor"),
+    /// getters for the instance's attributes, and its instance functions ("instance methods").
     pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         self.registry.cache_class(class)
     }
 
+    /// Executes one or more commands through the shell.
+    /// The [UserContext] holds the user's variables and current working directory.
+    /// The [IoContext] specifies the input commands to execute and the output to the results to.
+    /// The [CommandContext] specifies the universe of commands that can be executed.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::{CommandContext, IoContext, Shell, UserContext};
+    /// let mut shell = Shell::default();
+    /// let mut input = std::io::Cursor::new(
+    ///         "v1 = \"Mr. Burns\"
+    ///          v2 = 42
+    ///          echo $v1 $v2".as_bytes());
+    /// let mut output_vec: Vec<u8> = Vec::new();
+    /// let mut output = std::io::Cursor::new(&mut output_vec);
+    /// let mut io_context = IoContext::new("test", &mut input, &mut output);
+    /// let mut user_context = UserContext::default();
+    /// let command_context = CommandContext::default();
+    /// let mut shell = Shell::default();
+    ///
+    /// shell.execute_commands(&mut user_context, &mut io_context, &command_context).unwrap();
+    ///
+    /// assert_eq!("Mr. Burns 42", &String::from_utf8(output_vec).unwrap());
+    /// ```
     pub fn execute_commands(&mut self,
                             user_context: &mut UserContext,
                             io_context: &mut IoContext,
@@ -35,7 +150,7 @@ impl Shell {
 
                         let mut executed = false;
 
-                        for command in &command_context.commands {
+                        for command in &command_context.builtin_commands {
                             if command.validate(&token_group)? {
                                 command.execute(
                                     &token_group, user_context, io_context, command_context, self)?;
@@ -45,7 +160,8 @@ impl Shell {
                         }
 
                         if !executed {
-                            return Err(ShellError::UnknownCommand(token_group));
+                            command_context.execute_command.execute(
+                                &token_group, user_context, io_context, command_context, self)?;
                         }
                     }
                     Err(e) => return Err(match e {
@@ -56,6 +172,33 @@ impl Shell {
                 None => return Ok(())
             }
         }
+    }
+
+    /// This is a utility method to run commands from a string.
+    /// This method is primarily designed to simplify the running of commands in documentation and
+    /// tests and should not be used in production.
+    ///
+    /// # Example
+    /// ```
+    /// let (result, _) = rcore::command::Shell::from_string(
+    ///         "v1 = \"Mr. Burns\"
+    ///          v2 = 42
+    ///          echo $v1 $v2").unwrap();
+    ///
+    /// assert_eq!("Mr. Burns 42", result);
+    /// ```
+    pub fn from_string(commands: &str) -> Result<(String, UserContext), ShellError> {
+        let mut shell = Shell::default();
+        let command_context = CommandContext::default();
+        let mut user_context = UserContext::default();
+        let mut commands = io::Cursor::new(commands.as_bytes());
+        let mut output_vec: Vec<u8> = Vec::new();
+        let mut output = io::Cursor::new(&mut output_vec);
+        let mut io_context = IoContext::new("test", &mut commands, &mut output);
+
+        shell.execute_commands(&mut user_context, &mut io_context, &command_context)?;
+
+        Ok((String::from_utf8(output_vec).unwrap(), user_context))
     }
 }
 
@@ -118,13 +261,13 @@ impl PartialEq for ShellError {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::{LexerError, TokenGroup};
     use crate::command::shell::{Shell, ShellError};
 
     fn setup() -> (Shell, CommandContext, UserContext) {
-        (Shell::default(), CommandContext::new(), UserContext::new())
+        (Shell::default(), CommandContext::default(), UserContext::default())
     }
 
     #[test]

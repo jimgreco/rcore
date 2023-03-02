@@ -17,25 +17,27 @@ pub trait Command {
                shell: &mut Shell) -> Result<(), ShellError>;
 }
 
-pub struct AssignCommand {}
+pub(crate) struct AssignCommand {}
 
-pub struct CdCommand {}
+pub(crate) struct CdCommand {}
 
-pub struct CreateCommand {}
+pub(crate) struct CreateCommand {}
 
-pub struct DefaultAssignCommand {}
+pub(crate) struct DefaultAssignCommand {}
 
-pub struct EchoCommand {}
+pub(crate) struct EchoCommand {}
 
-pub struct ExecuteCommand {}
+pub(crate) struct ExecuteCommand {}
 
-pub struct LsCommand {}
+pub(crate) struct LsCommand {}
 
-pub struct MkDirCommand {}
+pub(crate) struct MkDirCommand {}
 
-pub struct SourceCommand {}
+pub(crate) struct PwdCommand {}
 
-pub struct UnsetCommand {}
+pub(crate) struct SourceCommand {}
+
+pub(crate) struct UnsetCommand {}
 
 impl Command for AssignCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
@@ -203,11 +205,19 @@ impl Command for ExecuteCommand {
 
 impl Command for LsCommand {
     fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        Ok(command.tokens.len() == 1 && command.tokens[0] == "ls")
+        if command.tokens[0] == "ls" {
+            if command.tokens.len() == 1 || command.tokens.len() == 2 {
+                Ok(true)
+            } else {
+                Err(ShellError::InvalidCommandFormat(command.clone()))
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     fn execute(&self,
-               _command: &TokenGroup,
+               command: &TokenGroup,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
@@ -215,7 +225,9 @@ impl Command for LsCommand {
         let registry = &shell.registry;
         let mut children: Vec<String> = vec![];
 
-        let path = registry.path(&user_context.pwd).map_err(|e| ShellError::RegistryError(e))?;
+        let cd = if command.tokens.len() == 1 { "." } else { &command.tokens[1] };
+
+        let path = registry.cd(&user_context.pwd, cd).map_err(|e| ShellError::RegistryError(e))?;
 
         for (child_name, child_id) in &path.children {
             let child = registry.paths.get(&child_id).unwrap();
@@ -352,6 +364,29 @@ impl Command for MkDirCommand {
                 command: command.clone(),
                 error: e,
             })
+    }
+}
+
+impl Command for PwdCommand {
+    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
+        if command.tokens[0] == "pwd" {
+            if command.tokens.len() == 1 {
+                Ok(true)
+            } else {
+                Err(ShellError::InvalidCommandFormat(command.clone()))
+            }
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn execute(&self,
+               _command: &TokenGroup,
+               user_context: &mut UserContext,
+               io_context: &mut IoContext,
+               _command_context: &CommandContext,
+               _shell: &mut Shell) -> Result<(), ShellError> {
+        io_context.write_str(&user_context.pwd)
     }
 }
 
@@ -538,12 +573,12 @@ mod assign_tests {
 
     #[test]
     fn execute_assignment_command() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let command = AssignCommand {};
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let mut source = IoContext::new("test", &mut input, &mut output);
         let tokens = TokenGroup {
             line: 0,
@@ -607,12 +642,12 @@ mod default_assign_tests {
 
     #[test]
     fn execute_default_assignment_command_sets_new_value() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut source = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = DefaultAssignCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -627,14 +662,14 @@ mod default_assign_tests {
 
     #[test]
     fn execute_default_assignment_command_already_there_doesnt_replace() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "soo");
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut source = IoContext::new("test", &mut input, &mut output);
 
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = DefaultAssignCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -721,7 +756,7 @@ mod unset_tests {
 
     #[test]
     fn execute_unset_command() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "bar");
         context.set_value("soo", "doo");
         context.set_value("goo", "boo");
@@ -729,7 +764,7 @@ mod unset_tests {
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = UnsetCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -792,12 +827,12 @@ mod mkdir_tests {
 
     #[test]
     fn mkdir_creates_new_directories() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = MkDirCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -861,12 +896,12 @@ mod cd_tests {
 
     #[test]
     fn cd_navigates_to_new_directory() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut output = io::sink();
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         MkDirCommand {}.execute(
             &TokenGroup {
                 line: 0,
@@ -930,13 +965,13 @@ mod echo_tests {
 
     #[test]
     fn echo_command_writes_tokens_to_output() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         let mut input = io::stdin();
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = EchoCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -1028,7 +1063,7 @@ mod create_tests {
 
     #[test]
     fn execute_create_command() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
@@ -1037,7 +1072,7 @@ mod create_tests {
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = CreateCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -1060,7 +1095,7 @@ mod create_tests {
 
     #[test]
     fn execute_create_command_with_wrong_data_type_is_an_era() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["int", "string"])
@@ -1069,7 +1104,7 @@ mod create_tests {
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         let command = CreateCommand {};
         let tokens = TokenGroup {
             line: 0,
@@ -1129,7 +1164,7 @@ mod execute_tests {
 
     #[test]
     fn execute_method() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
@@ -1139,7 +1174,7 @@ mod execute_tests {
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         CreateCommand {}.execute(
             &TokenGroup {
                 line: 0,
@@ -1167,7 +1202,7 @@ mod execute_tests {
 
     #[test]
     fn execute_method_with_incorrect_data_type_is_error() {
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         let mut shell = Shell::default();
         shell.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string", "int"])
@@ -1177,7 +1212,7 @@ mod execute_tests {
         let mut vec: Vec<u8> = Vec::new();
         let mut output = Cursor::new(&mut vec);
         let mut io_context = IoContext::new("test", &mut input, &mut output);
-        let command_context = CommandContext::new();
+        let command_context = CommandContext::default();
         CreateCommand {}.execute(
             &TokenGroup {
                 line: 0,

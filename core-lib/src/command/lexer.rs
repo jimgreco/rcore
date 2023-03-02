@@ -484,7 +484,7 @@ mod tests {
         a $1 multiple line \\
         command
         another";
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("testing123");
         context.add_argument("testing456");
         context.set_value("wtf", "foo");
@@ -509,7 +509,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io);
 
@@ -522,7 +522,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
@@ -540,7 +540,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
@@ -557,7 +557,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
@@ -575,7 +575,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands = lex_command(&context, &mut io).unwrap();
 
@@ -588,7 +588,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -605,7 +605,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -628,7 +628,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -645,7 +645,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -662,7 +662,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -679,7 +679,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.clone()).collect();
@@ -697,7 +697,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
@@ -718,7 +718,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -736,7 +736,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
             .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
@@ -753,7 +753,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -768,7 +768,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let commands = lex_command(&context, &mut io)
@@ -787,7 +787,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
@@ -807,7 +807,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
@@ -823,7 +823,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -838,7 +838,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let result = lex_command(&context, &mut io)
@@ -858,7 +858,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument("left");
         context.add_argument("his home");
@@ -876,7 +876,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("12");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -891,7 +891,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -906,7 +906,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", " left his home");
 
         let result = lex_command(&context, &mut io)
@@ -925,7 +925,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", " left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -940,7 +940,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let result = lex_command(&context, &mut io)
@@ -960,7 +960,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo");
         context.set_value("bar", "left");
         context.set_value("me", "his home");
@@ -978,7 +978,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
@@ -998,7 +998,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
@@ -1014,7 +1014,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left ");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
@@ -1029,7 +1029,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left ");
 
         let result = lex_command(&context, &mut io)
@@ -1048,7 +1048,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("f@oo", "Jojo left ");
 
         let result = lex_command(&context, &mut io)
