@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::io;
-use crate::command::commands::{AssignCommand, Command, DefaultAssignCommand, SourceCommand, UnsetCommand};
+use crate::command::commands::{
+    AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand,
+    ExecuteCommand, MkDirCommand, SourceCommand, UnsetCommand};
+use crate::command::shell::ShellError;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct UserContext {
     pub pwd: String,
     pub variables: HashMap<String, String>,
@@ -11,6 +14,14 @@ pub struct UserContext {
 }
 
 impl UserContext {
+    pub fn new() -> UserContext {
+        UserContext {
+            pwd: "/".to_owned(),
+            variables: HashMap::default(),
+            arguments: vec![]
+        }
+    }
+
     pub(crate) fn set_pwd(&mut self, pwd: &str) {
         self.pwd.clear();
         self.pwd.push_str(pwd);
@@ -60,6 +71,7 @@ pub struct IoContext<'a> {
     buffer: [u8; 1],
 }
 
+// TODO: we need to support writing multiple formats including text and JSON
 impl<'a> IoContext<'a> {
     pub fn new(name: &'a str, input: &'a mut dyn Read, output: &'a mut dyn Write) -> Self {
         IoContext {
@@ -82,8 +94,12 @@ impl<'a> IoContext<'a> {
         }
     }
 
-    pub(crate) fn write_str(&mut self, string: &str) -> Result<(), io::Error> {
-        self.output.write_all(string.as_bytes())
+    pub(crate) fn write_str(&mut self, string: &str) -> Result<(), ShellError> {
+        self.output.write_all(string.as_bytes()).map_err(|e| ShellError::IoError(e))
+    }
+
+    pub(crate) fn write_string(&mut self, string: String) -> Result<(), ShellError> {
+        self.output.write_all(string.as_bytes()).map_err(|e| ShellError::IoError(e))
     }
 }
 
@@ -95,9 +111,14 @@ impl CommandContext {
     pub fn new() -> Self {
         CommandContext {
             commands: vec![Box::new(AssignCommand {}),
+                           Box::new(CdCommand {}),
+                           Box::new(CreateCommand {}),
                            Box::new(DefaultAssignCommand {}),
-                           Box::new(UnsetCommand {}),
-                           Box::new(SourceCommand {})],
+                           Box::new(EchoCommand {}),
+                           Box::new(ExecuteCommand {}),
+                           Box::new(MkDirCommand {}),
+                           Box::new(SourceCommand {}),
+                           Box::new(UnsetCommand {})],
         }
     }
 

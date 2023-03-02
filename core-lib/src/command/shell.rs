@@ -5,6 +5,7 @@ use crate::command::lexer::{lex_command, LexerError, TokenGroup};
 
 use thiserror::Error;
 use crate::command::{Registry, RegistryError};
+use crate::command::oso::Class;
 
 pub struct Shell {
     pub(crate) registry: Registry,
@@ -15,6 +16,10 @@ impl Shell {
         Shell {
             registry: Registry::new()
         }
+    }
+
+    pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
+        self.registry.cache_class(class)
     }
 
     pub fn execute_commands(&mut self,
@@ -65,10 +70,12 @@ pub enum ShellError {
     #[error(transparent)]
     LexerError(LexerError),
     #[error("Error executing command on the registry: {command}, error={error}")]
-    RegistryError {
+    RegistryCommandError {
         command: TokenGroup,
         error: RegistryError,
     },
+    #[error("Error accessing the registry: {0}")]
+    RegistryError(RegistryError),
     #[error("File does not exist: {file}, error={error}")]
     UnknownFile {
         file: String,
@@ -92,8 +99,8 @@ impl PartialEq for ShellError {
         match (self, other) {
             (ShellError::LexerError(e1), ShellError::LexerError(e2))
             => e1 == e2,
-            (ShellError::RegistryError { command, error },
-                ShellError::RegistryError { command: command2, error: error2 })
+            (ShellError::RegistryCommandError { command, error },
+                ShellError::RegistryCommandError { command: command2, error: error2 })
             => command == command2 && error == error2,
             (ShellError::UnknownFile { file, .. }, ShellError::UnknownFile { file: file2, .. })
             => file == file2,
@@ -122,7 +129,7 @@ mod tests {
     use crate::command::shell::{Shell, ShellError};
 
     fn setup() -> (Shell, CommandContext, UserContext) {
-        (Shell::new(), CommandContext::new(), UserContext::default())
+        (Shell::new(), CommandContext::new(), UserContext::new())
     }
 
     #[test]
@@ -167,23 +174,6 @@ do12 = goo".as_bytes());
             src: "test".to_owned(),
             line: 2,
             col: 7,
-        }), result);
-    }
-
-    #[test]
-    fn unknown_command_throws_error() {
-        let (mut shell, commands, mut user_context) = setup();
-        let mut cursor = Cursor::new("foo = bar
-                    foo /= soo
-                    do12 = goo".as_bytes());
-        let mut sink = io::sink();
-        let mut io_context = IoContext::new("test", &mut cursor, &mut sink);
-
-        let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
-
-        assert_eq!(ShellError::UnknownCommand(TokenGroup {
-            line: 2,
-            tokens: vec!["foo".to_owned(), "/=".to_owned(), "soo".to_owned()],
         }), result);
     }
 
