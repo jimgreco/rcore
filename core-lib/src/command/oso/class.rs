@@ -321,7 +321,7 @@ where
 /// retrieved using `Instance::downcast`.
 #[derive(Clone)]
 pub struct Instance {
-    inner: Arc<dyn std::any::Any + Send + Sync>,
+    pub inner: Arc<dyn std::any::Any + Send + Sync>,
 
     /// The type name of the Instance, to be used for debugging purposes only.
     /// To get the registered name, use `Instance::name`.

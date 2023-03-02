@@ -17,12 +17,12 @@ pub struct Path {
     id: usize,
     pub name: String,
     parent: Option<usize>,
-    children: HashMap<String, usize>,
+    pub(crate) children: HashMap<String, usize>,
     pub full_path: String,
-    instance: Option<Instance>,
-    owner: Option<usize>,
-    attr: Option<&'static str>,
-    method: Option<&'static str>,
+    pub(crate) instance: Option<Instance>,
+    pub(crate) owner: Option<usize>,
+    pub(crate) attr: Option<&'static str>,
+    pub(crate) method: Option<&'static str>,
 }
 
 impl PartialEq for Path {
@@ -32,8 +32,8 @@ impl PartialEq for Path {
 }
 
 pub struct Registry {
-    host: Host,
-    paths: HashMap<usize, Path>,
+    pub(crate) host: Host,
+    pub(crate) paths: HashMap<usize, Path>,
     root_id: usize,
 }
 
@@ -575,13 +575,16 @@ impl Registry {
     // Invoke methods
     //
 
-    pub fn parsed_invoke_method_value<T: 'static + FromPolar>(
-        &mut self, pwd: &str, cd: &str, params: Vec<&str>) -> Result<T, RegistryError> {
+    pub fn parsed_invoke_method_value<T: 'static + FromPolar>(&mut self,
+                                                              pwd: &str,
+                                                              cd: &str,
+                                                              params: &Vec<&str>)
+                                                              -> Result<T, RegistryError> {
         let result = self.parsed_invoke_method(pwd, cd, params)?;
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
-    pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<&str>)
+    pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: &Vec<&str>)
                                 -> Result<PolarValue, RegistryError> {
         // check that we are an method node
         let method_path = self.cd(pwd, cd)?;
@@ -1147,7 +1150,7 @@ mod registry_tests {
             "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
 
         let result = registry.parsed_invoke_method(
-            "/foo/add_one", ".", vec!["42"]).unwrap();
+            "/foo/add_one", ".", &vec!["42"]).unwrap();
 
         assert_eq!(PolarValue::Integer(43), result);
     }
@@ -1159,7 +1162,7 @@ mod registry_tests {
             "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
 
         let result: i32 = registry.parsed_invoke_method_value(
-            "/foo/add_one", ".", vec!["42"]).unwrap();
+            "/foo/add_one", ".", &vec!["42"]).unwrap();
 
         assert_eq!(43, result);
     }
@@ -1215,7 +1218,7 @@ mod registry_tests {
         let mut registry = create_registry2();
 
         let result: i32 = registry.parsed_invoke_method_value(
-            "/foo/bar", "add_two", vec!["1", "2"]).unwrap();
+            "/foo/bar", "add_two", &vec!["1", "2"]).unwrap();
 
         assert_eq!(3, result);
     }
@@ -1225,7 +1228,7 @@ mod registry_tests {
         let mut registry = create_registry2();
 
         let result: Bar = registry.parsed_invoke_method_value(
-            "/foo/bar", "bar", vec![]).unwrap();
+            "/foo/bar", "bar", &vec![]).unwrap();
 
         assert_eq!(Bar {}, result);
     }
@@ -1235,7 +1238,7 @@ mod registry_tests {
         let mut registry = create_registry2();
 
         let result: bool = registry.parsed_invoke_method_value(
-            "/foo/bar", "doit", vec![]).unwrap();
+            "/foo/bar", "doit", &vec![]).unwrap();
 
         assert!(result);
     }
