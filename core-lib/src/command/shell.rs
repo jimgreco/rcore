@@ -261,7 +261,7 @@ impl PartialEq for ShellError {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::io::{Cursor, Write};
+    use std::io::Cursor;
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::{LexerError, TokenGroup};
     use crate::command::shell::{Shell, ShellError};

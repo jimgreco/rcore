@@ -79,7 +79,7 @@ impl Command for CdCommand {
                shell: &mut Shell) -> Result<(), ShellError> {
         match shell.registry.cd(&user_context.pwd, &command.tokens[1]) {
             Ok(path) => {
-                user_context.set_pwd(&path.full_path);
+                user_context.set_pwd(path.abs_path());
                 Ok(())
             }
             Err(e) => Err(ShellError::RegistryCommandError {
@@ -229,25 +229,25 @@ impl Command for LsCommand {
 
         let path = registry.cd(&user_context.pwd, cd).map_err(|e| ShellError::RegistryError(e))?;
 
-        for (child_name, child_id) in &path.children {
-            let child = registry.paths.get(&child_id).unwrap();
+        //for (child_name, child_id) in &path.children {
+        //    let child = registry.paths.get(&child_id).unwrap();
 
+        for child in path.children(&registry) {
             let mut child_str = String::new();
-            child_str.push_str(&child_name);
-            if !child.children.is_empty() {
+            child_str.push_str(child.name());
+            if child.has_children() {
                 child_str.push('/');
             }
 
-            if child.instance.is_some() {
-                let instance = child.instance.as_ref().unwrap();
-                let class = instance.class(&registry.host).unwrap();
+            if child.instance().is_some() {
+                let instance = child.instance().unwrap();
+                let class = registry.instance_class(instance);
 
                 child_str.push(' ');
                 child_str.push_str(&class.name);
             } else if child.method.is_some() {
-                let instance_path = registry.paths.get(&child.owner.unwrap()).unwrap();
-                let instance = instance_path.instance.as_ref().unwrap();
-                let class = instance.class(&registry.host).unwrap();
+                let instance = child.owner_instance(&registry).unwrap();
+                let class = registry.instance_class(instance);
                 let method_name = child.method.unwrap();
                 let method = class.instance_methods.get(method_name).unwrap();
 
@@ -267,9 +267,8 @@ impl Command for LsCommand {
                 child_str.push(')');
 
             } else if child.attr.is_some() {
-                let instance_path = registry.paths.get(&child.owner.unwrap()).unwrap();
-                let instance = instance_path.instance.as_ref().unwrap();
-                let class = instance.class(&registry.host).unwrap();
+                let instance = child.owner_instance(&registry).unwrap();
+                let class = registry.instance_class(instance);
                 let attr_name = child.attr.unwrap();
 
                 child_str.push('+');
@@ -322,7 +321,7 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
             io_context.write_str("]")
         },
         PolarValue::Instance(i) => {
-            let clz = i.class(&shell.registry.host).unwrap();
+            let clz = shell.registry.instance_class(i);
             io_context.write_str("{{")?;
             let mut first = true;
             for (attr_name, attr) in &clz.attributes {
@@ -331,10 +330,9 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
                 }
                 first = false;
                 io_context.write_string(format!("\"{}\":", attr_name))?;
-                match attr.invoke(i, &shell.registry.host) {
-                    Ok(v) => write_object(io_context, shell, &v)?,
-                    Err(_) => io_context.write_str("\"\"")?
-                };
+
+                let value = shell.registry.instance_attr(i, attr);
+                write_object(io_context, shell, &value)?;
             }
             io_context.write_str("}}")
         },
@@ -843,7 +841,7 @@ mod mkdir_tests {
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         let path = shell.registry.path("/foo/bar").unwrap();
-        assert_eq!("/foo/bar", path.full_path);
+        assert_eq!("/foo/bar", path.abs_path());
     }
 }
 
@@ -1079,7 +1077,7 @@ mod create_tests {
             tokens: vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
-                "core::command::commands::create_tests::User".to_owned(),
+                "rcore::command::commands::create_tests::User".to_owned(),
                 "jgreco".to_owned(),
                 "42".to_owned()
             ],
@@ -1111,7 +1109,7 @@ mod create_tests {
             tokens: vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
-                "core::command::commands::create_tests::User".to_owned(),
+                "rcore::command::commands::create_tests::User".to_owned(),
                 "jgreco".to_owned(),
                 "42".to_owned()
             ],
@@ -1123,7 +1121,7 @@ mod create_tests {
         assert_eq!(result, ShellError::RegistryCommandError {
             command: tokens,
             error: RegistryError::InvalidMethodParameter {
-                class: "core::command::commands::create_tests::User".to_owned(),
+                class: "rcore::command::commands::create_tests::User".to_owned(),
                 method: "<constructor>".to_owned(),
                 param_index: 0,
                 param_type: "int",
@@ -1181,7 +1179,7 @@ mod execute_tests {
                 tokens: vec![
                     "create".to_owned(),
                     "/foo/bar".to_owned(),
-                    "core::command::commands::execute_tests::User".to_owned(),
+                    "rcore::command::commands::execute_tests::User".to_owned(),
                     "jgreco".to_owned(),
                     "42".to_owned()
                 ],
@@ -1219,7 +1217,7 @@ mod execute_tests {
                 tokens: vec![
                     "create".to_owned(),
                     "/foo/bar".to_owned(),
-                    "core::command::commands::execute_tests::User".to_owned(),
+                    "rcore::command::commands::execute_tests::User".to_owned(),
                     "jgreco".to_owned(),
                     "42".to_owned()
                 ],
