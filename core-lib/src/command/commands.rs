@@ -2,56 +2,151 @@ use std::fs::File;
 use std::io::BufReader;
 use log::{Level, debug};
 use crate::command::context::{UserContext, IoContext, CommandContext};
-use crate::command::lexer::TokenGroup;
+use crate::command::lexer::Tokens;
 use crate::command::oso::PolarValue;
 use crate::command::shell::{Shell, ShellError};
 
 pub trait Command {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError>;
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError>;
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError>;
 }
 
-pub(crate) struct AssignCommand {}
+/// Assigns a value to a variable.
+///
+/// # Example
+/// ```
+/// let (_, context) = rcore::command::Shell::from_string("foo = bar").unwrap();
+///
+/// assert_eq!("bar", context.get_value("foo"));
+/// ```
+pub struct AssignCommand {}
 
-pub(crate) struct CdCommand {}
+/// Changes the current working directory.
+///
+/// # Example
+/// ```
+/// let (_, context) = rcore::command::Shell::from_string(
+///     "mkdir /foo/bar/me
+///      cd /foo/bar/me
+///      cd ../..").unwrap();
+///
+/// assert_eq!("/foo", context.pwd());
+/// ```
+pub struct CdCommand {}
 
-pub(crate) struct CreateCommand {}
+pub struct CreateCommand {}
 
-pub(crate) struct DefaultAssignCommand {}
+/// Assigns a value to a variable if it is not already assigned.
+///
+/// # Example
+/// ```
+/// let (_, context) = rcore::command::Shell::from_string(
+///     "v1 = abc                # v1 = abc
+///      v1 := def               # v1 = abc (already has value, not overridden)
+///      v2 := hij               # v2 = hij
+///      v2 = klm                # v2 = klm (overridden)
+///      v3 := \"nop   qrs\"     # v3 = nop, quotes allow for spaces in values
+///      echo $v1 $v2 $v3").unwrap();
+///
+/// assert_eq!("abc", context.get_value("v1").unwrap());
+/// assert_eq!("klm", context.get_value("v2").unwrap());
+/// assert_eq!("nop   qrs", context.get_value("v3").unwrap());
+/// ```
+pub struct DefaultAssignCommand {}
 
-pub(crate) struct EchoCommand {}
+/// Writes the arguments back to the output.
+///
+/// # Example
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string(
+///     "v1 = abc
+///      v2 := hij
+///      v3 := \"nop   qrs\"
+///      echo $v1 $v2 $v3").unwrap();
+///
+/// assert_eq!("abc hij nop   qrs", result);
+/// ```
+pub struct EchoCommand {}
 
-pub(crate) struct ExecuteCommand {}
+pub struct ExecuteCommand {}
 
-pub(crate) struct LsCommand {}
+/// Lists the contents of a directory
+///
+/// # Example
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string(
+///     "mkdir /foo/bar
+///      cd /foo
+///      ls").unwrap();
+///
+/// assert_eq!("bar\n", result);
+/// ```
+pub struct LsCommand {}
 
-pub(crate) struct MkDirCommand {}
+/// Creates a new directory.
+///
+/// This will create directories recursively if they do not exist.
+///
+/// # Example
+/// ```
+/// let (_, context) = rcore::command::Shell::from_string(
+///     "mkdir /foo
+///      mkdir /foo/bar/me
+///      cd foo/bar/me").unwrap();
+///
+/// assert_eq!("/foo/bar/me", context.pwd());
+/// ```
+pub struct MkDirCommand {}
 
-pub(crate) struct PwdCommand {}
+/// Returns the current working directory.
+///
+/// # Example
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string(
+///     "mkdir /foo/bar/me
+///      cd /foo/bar/me
+///      cd ../..
+///      pwd").unwrap();
+///
+/// assert_eq!("/foo", result);
+/// ```
+pub struct PwdCommand {}
 
-pub(crate) struct SourceCommand {}
+pub struct SourceCommand {}
 
-pub(crate) struct UnsetCommand {}
+/// Removes a variable.
+///
+/// # Example
+/// ```
+/// let (result, context) = rcore::command::Shell::from_string(
+///     "v1 = abc
+///      echo $v1
+///      unset v1").unwrap();
+///
+/// assert_eq!("abc", result);
+/// assert_eq!(None, context.get_value("v1"));
+/// ```
+pub struct UnsetCommand {}
 
 impl Command for AssignCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
         validate_assigment(command, "=")
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        let var = &command.tokens[0];
-        let value = &command.tokens[2];
+        let var = &command.get(0);
+        let value = &command.get(2);
         debug!("[Assign] setting variable {} = {}", var, value);
         user_context.set_value(var, value);
         Ok(())
@@ -59,9 +154,9 @@ impl Command for AssignCommand {
 }
 
 impl Command for CdCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "cd" {
-            if command.tokens.len() == 2 {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        if command.get(0) == "cd" {
+            if command.len() == 2 {
                 Ok(true)
             } else {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
@@ -72,12 +167,12 @@ impl Command for CdCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        match shell.registry.cd(&user_context.pwd, &command.tokens[1]) {
+        match shell.registry.cd(&user_context.pwd, &command.get(1)) {
             Ok(path) => {
                 user_context.set_pwd(path.abs_path());
                 Ok(())
@@ -91,9 +186,9 @@ impl Command for CdCommand {
 }
 
 impl Command for CreateCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "create" {
-            if command.tokens.len() >= 3 {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        if command.get(0) == "create" {
+            if command.len() >= 3 {
                 Ok(true)
             } else {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
@@ -104,19 +199,19 @@ impl Command for CreateCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
         let mut args: Vec<&str> = vec![];
-        for i in 3..command.tokens.len() {
-            args.push(&command.tokens[i]);
+        for i in 3..command.len() {
+            args.push(&command.get(i));
         }
 
         shell.registry.parsed_create_instance(&user_context.pwd,
-                                              &command.tokens[1],
-                                              &command.tokens[2],
+                                              &command.get(1),
+                                              &command.get(2),
                                               &args).map_err(|e|
             ShellError::RegistryCommandError {
                 command: command.clone(),
@@ -126,18 +221,18 @@ impl Command for CreateCommand {
 }
 
 impl Command for DefaultAssignCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
         validate_assigment(command, ":=")
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        let var = &command.tokens[0];
-        let value = &command.tokens[2];
+        let var = &command.get(0);
+        let value = &command.get(2);
         if log::log_enabled!(Level::Debug) {
             let replaced_value = user_context.get_value(var).is_some();
             user_context.set_default_value(var, value);
@@ -154,44 +249,44 @@ impl Command for DefaultAssignCommand {
 }
 
 impl Command for EchoCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        Ok(command.tokens[0] == "echo")
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        Ok(command.get(0) == "echo")
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                _user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        for i in 1..command.tokens.len() {
+        for i in 1..command.len() {
             if i != 1 {
                 io_context.write_str(" ")?;
             }
-            io_context.write_str(&command.tokens[i])?;
+            io_context.write_str(&command.get(i))?;
         }
         Ok(())
     }
 }
 
 impl Command for ExecuteCommand {
-    fn validate(&self, _command: &TokenGroup) -> Result<bool, ShellError> {
+    fn validate(&self, _command: &Tokens) -> Result<bool, ShellError> {
         Ok(true)
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
         let mut args: Vec<&str> = vec![];
-        for i in 1..command.tokens.len() {
-            args.push(&command.tokens[i]);
+        for i in 1..command.len() {
+            args.push(&command.get(i));
         }
 
         let result = shell.registry.parsed_invoke_method(&user_context.pwd,
-                                                         &command.tokens[0],
+                                                         &command.get(0),
                                                          &args)
             .map_err(|e| ShellError::RegistryCommandError {
                 command: command.clone(),
@@ -204,9 +299,9 @@ impl Command for ExecuteCommand {
 }
 
 impl Command for LsCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "ls" {
-            if command.tokens.len() == 1 || command.tokens.len() == 2 {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        if command.get(0) == "ls" {
+            if command.len() == 1 || command.len() == 2 {
                 Ok(true)
             } else {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
@@ -217,7 +312,7 @@ impl Command for LsCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
@@ -225,7 +320,7 @@ impl Command for LsCommand {
         let registry = &shell.registry;
         let mut children: Vec<String> = vec![];
 
-        let cd = if command.tokens.len() == 1 { "." } else { &command.tokens[1] };
+        let cd = if command.len() == 1 { "." } else { &command.get(1) };
 
         let path = registry.cd(&user_context.pwd, cd).map_err(|e| ShellError::RegistryError(e))?;
 
@@ -340,9 +435,9 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
 }
 
 impl Command for MkDirCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "mkdir" {
-            return if command.tokens.len() == 2 {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        if command.get(0) == "mkdir" {
+            return if command.len() == 2 {
                 Ok(true)
             } else {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
@@ -352,26 +447,26 @@ impl Command for MkDirCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        shell.registry.mkdir(&user_context.pwd, &command.tokens[1]).map_err(
+        shell.registry.mkdir(&user_context.pwd, &tokens.get(1)).map_err(
             |e| ShellError::RegistryCommandError {
-                command: command.clone(),
+                command: tokens.clone(),
                 error: e,
             })
     }
 }
 
 impl Command for PwdCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if command.tokens[0] == "pwd" {
-            if command.tokens.len() == 1 {
+    fn validate(&self, tokens: &Tokens) -> Result<bool, ShellError> {
+        if tokens.get(0) == "pwd" {
+            if tokens.len() == 1 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(ShellError::InvalidCommandFormat(tokens.clone()))
             }
         } else {
             Ok(false)
@@ -379,7 +474,7 @@ impl Command for PwdCommand {
     }
 
     fn execute(&self,
-               _command: &TokenGroup,
+               _command: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
@@ -389,12 +484,12 @@ impl Command for PwdCommand {
 }
 
 impl Command for SourceCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        let len = command.tokens.len();
-        if command.tokens[0] == "source" {
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        let len = command.len();
+        if command.get(0) == "source" {
             return if len == 1 {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
-            } else if len == 2 && command.tokens[1] != "-s" || len >= 3 {
+            } else if len == 2 && command.get(1) != "-s" || len >= 3 {
                 Ok(true)
             } else {
                 Err(ShellError::InvalidCommandFormat(command.clone()))
@@ -404,26 +499,26 @@ impl Command for SourceCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        let subshell = command.tokens[1] == "-s";
+        let subshell = tokens.get(1) == "-s";
         let arg_start = if subshell { 3 } else { 2 };
-        let file_name = &command.tokens[arg_start - 1];
-        let args = &command.tokens[arg_start..];
+        let file_name = tokens.get(arg_start - 1);
 
         debug!("[Source] loading file {}{}, args={}",
             file_name,
             if subshell { " (subshell)" } else { "" },
-            command.tokens_substring(arg_start, command.tokens.len()));
+            tokens.tokens_substring(arg_start, tokens.len()));
 
         // make a copy of all variables
         let mut new_user_context = user_context.clone();
         // add our arguments to the file
         new_user_context.clear_arguments();
-        for arg in args {
+        for i in arg_start..tokens.len() {
+            let arg = tokens.get(i);
             new_user_context.add_argument(arg);
         }
 
@@ -457,17 +552,17 @@ impl Command for SourceCommand {
 }
 
 impl Command for UnsetCommand {
-    fn validate(&self, command: &TokenGroup) -> Result<bool, ShellError> {
-        if &command.tokens[0] == "unset" {
-            let len = command.tokens.len();
+    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+        if command.get(0) == "unset" {
+            let len = command.len();
             if len == 1 {
                 return Err(ShellError::InvalidCommandFormat(command.clone()));
             }
             for i in 1..len {
-                if !validate_variable(&command.tokens[i]) {
+                if !validate_variable(&command.get(i)) {
                     return Err(ShellError::InvalidVariableName {
                         command: command.clone(),
-                        var: command.tokens[i].to_owned(),
+                        var: command.get(i).to_owned(),
                     });
                 }
             }
@@ -477,15 +572,15 @@ impl Command for UnsetCommand {
     }
 
     fn execute(&self,
-               command: &TokenGroup,
+               command: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
         debug!("[Unset] removing variables {}",
-            command.tokens_substring(1, command.tokens.len()));
-        for i in 1..command.tokens.len() {
-            user_context.remove_value(&command.tokens[i]);
+            command.tokens_substring(1, command.len()));
+        for i in 1..command.len() {
+            user_context.remove_value(&command.get(i));
         }
         Ok(())
     }
@@ -506,16 +601,16 @@ fn validate_variable(variable: &str) -> bool {
     return true;
 }
 
-fn validate_assigment(command: &TokenGroup, sign: &'static str)
+fn validate_assigment(tokens: &Tokens, sign: &'static str)
                       -> Result<bool, ShellError> {
-    let tokens = &command.tokens;
-    if tokens.len() == 3 && tokens[1] == sign {
-        if validate_variable(&tokens[0]) {
+
+    if tokens.len() == 3 && tokens.get(1) == sign {
+        if validate_variable(tokens.get(0)) {
             Ok(true)
         } else {
             Err(ShellError::InvalidVariableName {
-                command: command.to_owned(),
-                var: tokens[0].to_owned(),
+                command: tokens.to_owned(),
+                var: tokens.get(0).to_owned(),
             })
         }
     } else {
@@ -528,17 +623,15 @@ mod assign_tests {
     use std::io;
     use crate::command::commands::{AssignCommand, Command};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
         let command = AssignCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -547,10 +640,8 @@ mod assign_tests {
     fn validate_invalid_assignment_command_returns_false() {
         let command = AssignCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(!result);
     }
@@ -558,10 +649,7 @@ mod assign_tests {
     #[test]
     fn validate_invalid_variable_name_returns_error() {
         let command = AssignCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["12foo".to_owned(), "=".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "bar".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -578,10 +666,7 @@ mod assign_tests {
         let mut output = io::sink();
         let command_context = CommandContext::default();
         let mut source = IoContext::new("test", &mut input, &mut output);
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()]);
         command.validate(&tokens).unwrap();
 
         command.execute(&tokens, &mut context, &mut source, &command_context, &mut shell).unwrap();
@@ -595,17 +680,15 @@ mod default_assign_tests {
     use std::io;
     use crate::command::commands::{DefaultAssignCommand, Command};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
         let command = DefaultAssignCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -614,10 +697,8 @@ mod default_assign_tests {
     fn validate_invalid_assignment_command_returns_false() {
         let command = DefaultAssignCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(!result);
     }
@@ -625,10 +706,7 @@ mod default_assign_tests {
     #[test]
     fn validate_invalid_variable_name_returns_error() {
         let command = DefaultAssignCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["12foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["12foo".to_owned(), ":=".to_owned(), "bar".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -647,10 +725,7 @@ mod default_assign_tests {
         let mut source = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = DefaultAssignCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()]);
         command.validate(&tokens).unwrap();
 
         command.execute(&tokens, &mut context, &mut source, &command_context, &mut shell).unwrap();
@@ -669,10 +744,7 @@ mod default_assign_tests {
 
         let command_context = CommandContext::default();
         let command = DefaultAssignCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()]);
         command.validate(&tokens).unwrap();
 
         command.execute(&tokens, &mut context, &mut source, &command_context, &mut shell).unwrap();
@@ -686,17 +758,14 @@ mod unset_tests {
     use std::io;
     use crate::command::commands::{Command, UnsetCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
 
     #[test]
     fn validate_valid_unset_command_with_one_variable_returns_true() {
         let command = UnsetCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["unset".to_owned(), "foo".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(vec!["unset".to_owned(), "foo".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -705,10 +774,8 @@ mod unset_tests {
     fn validate_valid_unset_command_with_multiple_variables_returns_true() {
         let command = UnsetCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["unset".to_owned(), "foo".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["unset".to_owned(), "foo".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -717,10 +784,8 @@ mod unset_tests {
     fn different_command_returns_false() {
         let command = UnsetCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["foo".to_owned(), "=".to_owned(), "unset".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["foo".to_owned(), "=".to_owned(), "unset".to_owned()])).unwrap();
 
         assert!(!result);
     }
@@ -728,10 +793,7 @@ mod unset_tests {
     #[test]
     fn unset_with_no_variables_is_error() {
         let command = UnsetCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["unset".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["unset".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -741,10 +803,7 @@ mod unset_tests {
     #[test]
     fn unset_invalid_variable_name_returns_error() {
         let command = UnsetCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["unset".to_owned(), "foo".to_owned(), "12foo".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["unset".to_owned(), "foo".to_owned(), "12foo".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -764,12 +823,10 @@ mod unset_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = UnsetCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["unset".to_owned(), "soo".to_owned(), "goo".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["unset".to_owned(), "soo".to_owned(), "goo".to_owned()]);
 
-        command.execute(&tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+        command.execute(
+            &tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         assert_eq!("bar", context.get_value("foo").unwrap());
         assert!(context.get_value("soo").is_none());
@@ -782,17 +839,14 @@ mod mkdir_tests {
     use std::io;
     use crate::command::commands::{Command, MkDirCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
 
     #[test]
     fn validate_valid_mkdir_command_returns_true() {
         let command = MkDirCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["mkdir".to_owned(), "foo".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(vec!["mkdir".to_owned(), "foo".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -800,10 +854,7 @@ mod mkdir_tests {
     #[test]
     fn validate_mkdir_command_without_arg_returns_error() {
         let command = MkDirCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["mkdir".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["mkdir".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -813,10 +864,7 @@ mod mkdir_tests {
     #[test]
     fn validate_mkdir_command_with_multiple_args_returns_error() {
         let command = MkDirCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["mkdir".to_owned(), "foo".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["mkdir".to_owned(), "foo".to_owned(), "bar".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -832,10 +880,7 @@ mod mkdir_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = MkDirCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["mkdir".to_owned(), "foo/bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["mkdir".to_owned(), "foo/bar".to_owned()]);
 
         command.execute(
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
@@ -850,16 +895,13 @@ mod cd_tests {
     use std::io;
     use crate::command::commands::{Command, CdCommand, MkDirCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
 
     #[test]
     fn validate_valid_cd_command_returns_error() {
         let command = CdCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["cd".to_owned(), "foo".to_owned(), "bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["cd".to_owned(), "foo".to_owned(), "bar".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -869,10 +911,7 @@ mod cd_tests {
     #[test]
     fn validate_cd_command_without_arg_returns_error() {
         let command = CdCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["cd".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["cd".to_owned()]);
 
         let result = command.validate(&tokens).err().unwrap();
 
@@ -882,10 +921,7 @@ mod cd_tests {
     #[test]
     fn validate_cd_command_with_one_arg_returns_true() {
         let command = CdCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["cd".to_owned(), "foo/bar".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["cd".to_owned(), "foo/bar".to_owned()]);
 
         let result = command.validate(&tokens).unwrap();
 
@@ -901,16 +937,12 @@ mod cd_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         MkDirCommand {}.execute(
-            &TokenGroup {
-                line: 0,
-                tokens: vec!["mkdir".to_owned(), "foo/bar/soo".to_owned()],
-            }, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+            &Tokens::new(vec!["mkdir".to_owned(), "foo/bar/soo".to_owned()]),
+            &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         CdCommand {}.execute(
-            &TokenGroup {
-                line: 0,
-                tokens: vec!["cd".to_owned(), "foo/bar".to_owned()],
-            }, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+            &Tokens::new(vec!["cd".to_owned(), "foo/bar".to_owned()]),
+            &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         assert_eq!("/foo/bar", context.pwd);
     }
@@ -922,17 +954,15 @@ mod echo_tests {
     use std::io::Cursor;
     use crate::command::commands::{Command, EchoCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_echo_command_returns_true() {
         let command = EchoCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["echo".to_owned(), "foo".to_owned(), "bar".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(
+            vec!["echo".to_owned(), "foo".to_owned(), "bar".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -941,10 +971,7 @@ mod echo_tests {
     fn validate_echo_command_without_args_returns_true() {
         let command = EchoCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["echo".to_owned()],
-        }).unwrap();
+        let result = command.validate(&Tokens::new(vec!["echo".to_owned()])).unwrap();
 
         assert!(result);
     }
@@ -953,10 +980,8 @@ mod echo_tests {
     fn non_echo_command_returns_false() {
         let command = EchoCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec!["mkdir".to_owned(), "foo".to_owned()],
-        }).unwrap();
+        let result = command.validate(
+            &Tokens::new(vec!["mkdir".to_owned(), "foo".to_owned()])).unwrap();
 
         assert!(!result);
     }
@@ -971,10 +996,7 @@ mod echo_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = EchoCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec!["echo".to_owned(), "foo".to_owned(), "me".to_owned()],
-        };
+        let tokens = Tokens::new(vec!["echo".to_owned(), "foo".to_owned(), "me".to_owned()]);
 
         command.execute(
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
@@ -990,9 +1012,8 @@ mod create_tests {
     use std::io::Cursor;
     use crate::command::commands::{Command, CreateCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
-    use crate::command::shell::ShellError::InvalidCommandFormat;
     use crate::command::oso::PolarClass;
     use crate::command::RegistryError;
 
@@ -1014,16 +1035,13 @@ mod create_tests {
     fn validate_valid_create_command_returns_true() {
         let command = CreateCommand {};
 
-        let result = command.validate(&TokenGroup {
-            line: 0,
-            tokens: vec![
+        let result = command.validate(&Tokens::new(vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
                 "core::command::commands::create_tests::User".to_owned(),
                 "jgreco".to_owned(),
                 "42".to_owned()
-            ],
-        }).unwrap();
+            ])).unwrap();
 
         assert!(result);
     }
@@ -1031,32 +1049,26 @@ mod create_tests {
     #[test]
     fn validate_create_command_with_1_param_is_error() {
         let command = CreateCommand {};
-        let token = TokenGroup {
-            line: 0,
-            tokens: vec![
+        let token = Tokens::new(vec![
                 "create".to_owned()
-            ],
-        };
+            ]);
 
         let result = command.validate(&token).err().unwrap();
 
-        assert_eq!(result, InvalidCommandFormat(token));
+        assert_eq!(result, ShellError::InvalidCommandFormat(token));
     }
 
     #[test]
     fn validate_create_command_with_2_params_returns_false() {
         let command = CreateCommand {};
-        let token = TokenGroup {
-            line: 0,
-            tokens: vec![
+        let token = Tokens::new(vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
-            ],
-        };
+            ]);
 
         let result = command.validate(&token).err().unwrap();
 
-        assert_eq!(result, InvalidCommandFormat(token));
+        assert_eq!(result, ShellError::InvalidCommandFormat(token));
     }
 
     #[test]
@@ -1072,16 +1084,13 @@ mod create_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = CreateCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec![
+        let tokens = Tokens::new(vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
                 "rcore::command::commands::create_tests::User".to_owned(),
                 "jgreco".to_owned(),
                 "42".to_owned()
-            ],
-        };
+            ]);
 
         command.execute(
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
@@ -1104,16 +1113,13 @@ mod create_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         let command = CreateCommand {};
-        let tokens = TokenGroup {
-            line: 0,
-            tokens: vec![
+        let tokens = Tokens::new(vec![
                 "create".to_owned(),
                 "/foo/bar".to_owned(),
                 "rcore::command::commands::create_tests::User".to_owned(),
                 "jgreco".to_owned(),
                 "42".to_owned()
-            ],
-        };
+            ]);
 
         let result = command.execute(
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).err().unwrap();
@@ -1137,7 +1143,7 @@ mod execute_tests {
     use std::io::Cursor;
     use crate::command::commands::{Command, CreateCommand, ExecuteCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::TokenGroup;
+    use crate::command::lexer::Tokens;
     use crate::command::shell::{Shell, ShellError};
     use crate::command::oso::PolarClass;
     use crate::command::RegistryError;
@@ -1174,25 +1180,19 @@ mod execute_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         CreateCommand {}.execute(
-            &TokenGroup {
-                line: 0,
-                tokens: vec![
+            &Tokens::new(vec![
                     "create".to_owned(),
                     "/foo/bar".to_owned(),
                     "rcore::command::commands::execute_tests::User".to_owned(),
                     "jgreco".to_owned(),
                     "42".to_owned()
-                ],
-            }, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+                ]), &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         ExecuteCommand {}.execute(
-            &TokenGroup {
-                line: 0,
-                tokens: vec![
+            &Tokens::new(vec![
                     "/foo/bar/add".to_owned(),
                     "41".to_owned()
-                ],
-            }, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+                ]), &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
         let string = String::from_utf8(vec).unwrap();
         assert_eq!("42", string);
@@ -1212,23 +1212,17 @@ mod execute_tests {
         let mut io_context = IoContext::new("test", &mut input, &mut output);
         let command_context = CommandContext::default();
         CreateCommand {}.execute(
-            &TokenGroup {
-                line: 0,
-                tokens: vec![
+            &Tokens::new(vec![
                     "create".to_owned(),
                     "/foo/bar".to_owned(),
                     "rcore::command::commands::execute_tests::User".to_owned(),
                     "jgreco".to_owned(),
                     "42".to_owned()
-                ],
-            }, &mut context, &mut io_context, &command_context, &mut shell).unwrap();
-        let command = TokenGroup {
-            line: 0,
-            tokens: vec![
+                ]), &mut context, &mut io_context, &command_context, &mut shell).unwrap();
+        let command = Tokens::new(vec![
                 "/foo/bar/add".to_owned(),
                 "foo".to_owned()
-            ],
-        };
+            ]);
 
         let err = ExecuteCommand {}.execute(
             &command, &mut context, &mut io_context, &command_context, &mut shell).err().unwrap();

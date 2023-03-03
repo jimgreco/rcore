@@ -9,6 +9,7 @@ pub use self::commands::Command;
 pub use self::context::CommandContext;
 pub use self::context::UserContext;
 pub use self::context::IoContext;
+pub use self::lexer::Tokens;
 pub use self::registry::PathSegment;
 pub use self::registry::Registry;
 pub use self::registry::RegistryError;

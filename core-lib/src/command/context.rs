@@ -6,7 +6,7 @@ use crate::command::shell::ShellError;
 
 #[derive(Clone)]
 pub struct UserContext {
-    pub pwd: String,
+    pub(crate) pwd: String,
     pub variables: HashMap<String, String>,
     arguments: Vec<String>,
 }
@@ -27,6 +27,11 @@ impl UserContext {
         self.pwd.push_str(pwd);
     }
 
+    /// The current working directory.
+    pub fn pwd(&self) -> &str {
+        &self.pwd
+    }
+
     pub(crate) fn get_argument(&self, position: usize) -> Option<&String> {
         self.arguments.get(position)
     }
@@ -39,7 +44,7 @@ impl UserContext {
         self.arguments.clear();
     }
 
-    pub(crate) fn get_value(&self, key: &str) -> Option<&String> {
+    pub fn get_value(&self, key: &str) -> Option<&String> {
         self.variables.get(key)
     }
 

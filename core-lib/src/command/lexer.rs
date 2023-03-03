@@ -78,21 +78,58 @@ impl PartialEq for LexerError {
     }
 }
 
+/// The tokens for a single command.
 #[derive(Debug, PartialEq, Clone)]
-pub struct TokenGroup {
-    pub line: usize,
-    pub tokens: Vec<String>,
-}
+pub struct Tokens(Vec<String>);
 
-impl TokenGroup {
-    pub fn tokens_string(&self) -> String {
-        self.tokens_substring(0, self.tokens.len())
+impl Tokens {
+    pub(crate) fn all(&self) -> &Vec<String> {
+        &self.0
     }
 
+    /// Creates a new [Tokens] instance from the specified vector of strings.
+    pub fn new(tokens: Vec<String>) -> Tokens {
+        Tokens(tokens)
+    }
+
+    /// The number of tokens.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the token of the specified index.
+    pub fn get(&self, index: usize) -> &str {
+        &self.0[index]
+    }
+
+    /// Combines all tokens into a string.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Tokens;
+    ///
+    /// let tokens = Tokens::new(vec!["foo".to_owned(), "bar soo".to_owned(), "me".to_owned()]);
+    ///
+    /// assert_eq!("\"foo\" \"bar soo\" \"me\"", tokens.tokens_string())
+    /// ```
+    pub fn tokens_string(&self) -> String {
+        self.tokens_substring(0, self.len())
+    }
+
+    /// Combines all tokens into a string for the specified indices.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Tokens;
+    ///
+    /// let tokens = Tokens::new(vec!["foo".to_owned(), "bar soo".to_owned(), "me".to_owned()]);
+    ///
+    /// assert_eq!("\"bar soo\" \"me\"", tokens.tokens_substring(1, 3))
+    /// ```
     pub fn tokens_substring(&self, start: usize, end: usize) -> String {
         let mut str = "".to_owned();
         let mut first = true;
-        for token in &self.tokens[start..end] {
+        for token in &self.0[start..end] {
             if !first {
                 str.push(' ');
             }
@@ -105,10 +142,10 @@ impl TokenGroup {
     }
 }
 
-impl fmt::Display for TokenGroup {
+impl fmt::Display for Tokens {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: ", self.line)?;
-        for token in self.tokens.iter() {
+        for i in 1..self.len() {
+            let token = self.get(i);
             write!(f, " \"{}\"", token)?;
         }
         write!(f, "")
@@ -116,7 +153,7 @@ impl fmt::Display for TokenGroup {
 }
 
 pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoContext<'a>)
-                              -> Option<Result<TokenGroup, LexerError>> {
+                              -> Option<Result<Tokens, LexerError>> {
     let mut in_quotes = false;
     let mut in_comment = false;
     let mut in_backslash = false;
@@ -149,7 +186,7 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                         }
 
                         if tokens.len() > 0 {
-                            let group = TokenGroup { line: io_context.line, tokens };
+                            let group = Tokens(tokens);
                             return Some(Ok(group));
                         } else {
                             return None;
@@ -177,7 +214,7 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
 
                             // continue to the next line if the last character is a backslash
                             if !in_backslash && tokens.len() > 0 {
-                                let group = TokenGroup { line: io_context.line, tokens };
+                                let group = Tokens(tokens);
                                 return Some(Ok(group));
                             }
 
@@ -463,11 +500,11 @@ mod tests {
     use std::io;
     use std::io::{Cursor};
     use crate::command::context::{UserContext, IoContext};
-    use crate::command::lexer::{lex_command, LexerError, TokenGroup};
+    use crate::command::lexer::{lex_command, LexerError, Tokens};
 
     fn lex_all_commands(context: &UserContext, source: &mut IoContext)
-                        -> Result<Vec<TokenGroup>, LexerError> {
-        let mut tokens: Vec<TokenGroup> = vec![];
+                        -> Result<Vec<Tokens>, LexerError> {
+        let mut tokens: Vec<Tokens> = vec![];
         loop {
             match lex_command(context, source) {
                 None => return Ok(tokens),
@@ -579,7 +616,7 @@ mod tests {
 
         let commands = lex_command(&context, &mut io).unwrap();
 
-        assert_eq!("bar \n me \" now \\ abc ", commands.unwrap().tokens[1]);
+        assert_eq!("bar \n me \" now \\ abc ", commands.unwrap().get(1));
     }
 
     #[test]
@@ -591,7 +628,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(1, commands.len());
         assert_eq!("foo_/_bar", commands[0]);
@@ -608,7 +645,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -631,7 +668,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -648,7 +685,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(1, commands.len());
         assert_eq!("foo_/_bar", commands[0]);
@@ -665,7 +702,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(2, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner_/_But_/_he_/_knew it couldn't_/_last",
@@ -682,7 +719,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         let tokens = &commands[0];
         assert_eq!(3, tokens.len());
@@ -721,7 +758,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(2, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -739,7 +776,7 @@ mod tests {
         let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man", commands[0]);
@@ -757,7 +794,7 @@ mod tests {
         context.add_argument("Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -812,7 +849,7 @@ mod tests {
         context.add_argument(" left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }
@@ -827,7 +864,7 @@ mod tests {
         context.add_argument(" left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -864,7 +901,7 @@ mod tests {
         context.add_argument("his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left", commands[0][0]);
         assert_eq!("his home", commands[0][1]);
@@ -880,7 +917,7 @@ mod tests {
         context.add_argument("12");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("12345", commands[0][0]);
     }
@@ -895,7 +932,7 @@ mod tests {
         context.set_value("foo", "Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -929,7 +966,7 @@ mod tests {
         context.set_value("foo", " left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -966,7 +1003,7 @@ mod tests {
         context.set_value("me", "his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left", commands[0][0]);
         assert_eq!("his home", commands[0][1]);
@@ -1003,7 +1040,7 @@ mod tests {
         context.set_value("bar", " his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }
@@ -1018,7 +1055,7 @@ mod tests {
         context.set_value("foo", "Jojo left ");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }

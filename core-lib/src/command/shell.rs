@@ -1,7 +1,7 @@
 use std::io;
 use log::{Level, debug};
 use crate::command::context::{UserContext, IoContext, CommandContext};
-use crate::command::lexer::{lex_command, LexerError, TokenGroup};
+use crate::command::lexer::{lex_command, LexerError, Tokens};
 
 use thiserror::Error;
 use crate::command::{Registry, RegistryError};
@@ -209,7 +209,7 @@ pub enum ShellError {
     LexerError(LexerError),
     #[error("Error executing command on the registry: {command}, error={error}")]
     RegistryCommandError {
-        command: TokenGroup,
+        command: Tokens,
         error: RegistryError,
     },
     #[error("Error accessing the registry: {0}")]
@@ -221,13 +221,13 @@ pub enum ShellError {
     },
     #[error("invalid variable name: {var}, command={command}")]
     InvalidVariableName {
-        command: TokenGroup,
+        command: Tokens,
         var: String,
     },
     #[error("invalid formatted command: {0}")]
-    InvalidCommandFormat(TokenGroup),
+    InvalidCommandFormat(Tokens),
     #[error("unknown command: {0}")]
-    UnknownCommand(TokenGroup),
+    UnknownCommand(Tokens),
     #[error("I/O error: {0}")]
     IoError(io::Error),
 }
@@ -263,7 +263,7 @@ mod tests {
     use std::io;
     use std::io::Cursor;
     use crate::command::context::{UserContext, IoContext, CommandContext};
-    use crate::command::lexer::{LexerError, TokenGroup};
+    use crate::command::lexer::{LexerError, Tokens};
     use crate::command::shell::{Shell, ShellError};
 
     fn setup() -> (Shell, CommandContext, UserContext) {
@@ -327,10 +327,7 @@ do12 = goo".as_bytes());
         let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
 
         assert_eq!(ShellError::InvalidVariableName {
-            command: TokenGroup {
-                line: 2,
-                tokens: vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()],
-            },
+            command: Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]),
             var: "12foo".to_string(),
         }, result);
     }
