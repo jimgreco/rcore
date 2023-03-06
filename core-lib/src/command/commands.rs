@@ -1,16 +1,80 @@
 use std::fs::File;
+use std::io;
 use std::io::BufReader;
+use std::ptr::eq;
 use log::{Level, debug};
 use crate::command::context::{UserContext, IoContext, CommandContext};
 use crate::command::lexer::Tokens;
 use crate::command::oso::PolarValue;
-use crate::command::shell::{Shell, ShellError};
+use crate::command::ShellError;
+use crate::command::shell::Shell;
 
+use thiserror::Error;
+
+/// Errors thrown while validating commands.
+#[derive(Debug, Error, PartialEq)]
+pub enum CommandValidationError {
+    #[error("invalid command format, expected: {format}")]
+    InvalidCommandFormat {
+        format: &'static str
+    },
+    #[error("invalid variable name: {0}")]
+    InvalidVariableName(String)
+}
+
+/// Errors thrown while executing commands.
+#[derive(Debug, Error)]
+pub enum CommandExecutionError {
+    #[error("File does not exist: {file}, error={error}")]
+    UnableToOpenFile {
+        file: String,
+        error: io::Error,
+    },
+    #[error("invalid variable name: {var}, command={tokens}")]
+    InvalidVariableName {
+        tokens: Tokens,
+        var: String,
+    },
+    #[error("source command invoked too many times recursively: {0}")]
+    MaxSourceCommand(usize),
+}
+
+impl PartialEq for CommandExecutionError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (CommandExecutionError::UnableToOpenFile { file, ..},
+            CommandExecutionError::UnableToOpenFile { file: file2, .. }) => file == file2,
+            (CommandExecutionError::InvalidVariableName { tokens: command, var },
+                CommandExecutionError::InvalidVariableName { tokens: command2, var: var2 })
+            => command == command2 && var == var2,
+            (CommandExecutionError::MaxSourceCommand(size),
+                CommandExecutionError::MaxSourceCommand(size2)) => size == size2,
+            _ => false
+        }
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        !eq(self, other)
+    }
+}
+
+/// A command is an operation that can be executed in the Shell.
 pub trait Command {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError>;
+    /// Returns the name of the command.
+    fn name(&self) -> &'static str;
 
+    /// Returns true if the implementation can execute a command with the specified tokens.
+    ///
+    /// A shell error is returned if the command is improperly formatted.
+    fn validate(&self, tokens: &Tokens) -> Result<bool, CommandValidationError>;
+
+    /// Executes a command with the specified context.
+    ///
+    /// The implementation can assume that the command has been previously validated.
+    ///
+    /// An error is returned if there was an issue executing the command.
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                command_context: &CommandContext,
@@ -23,7 +87,7 @@ pub trait Command {
 /// ```
 /// let (_, context) = rcore::command::Shell::from_string("foo = bar").unwrap();
 ///
-/// assert_eq!("bar", context.get_value("foo"));
+/// assert_eq!("bar", context.get_value("foo").unwrap());
 /// ```
 pub struct AssignCommand {}
 
@@ -40,6 +104,7 @@ pub struct AssignCommand {}
 /// ```
 pub struct CdCommand {}
 
+/// Creates an instance of a struct.
 pub struct CreateCommand {}
 
 /// Assigns a value to a variable if it is not already assigned.
@@ -74,6 +139,7 @@ pub struct DefaultAssignCommand {}
 /// ```
 pub struct EchoCommand {}
 
+/// Invokes a method or retrieves the value of an attribute on an instance.
 pub struct ExecuteCommand {}
 
 /// Lists the contents of a directory
@@ -118,6 +184,40 @@ pub struct MkDirCommand {}
 /// ```
 pub struct PwdCommand {}
 
+/// Returns the current working directory.
+///
+/// # Examples
+/// ```
+/// use std::fs::File;
+/// use std::io::Write;
+///
+/// let mut file = File::create("/tmp/subshell_test.commands").unwrap();
+/// file.write("v1 = foo
+///             v2 = bar".as_bytes()).unwrap();
+///
+/// let (_, context) = rcore::command::Shell::from_string(
+///     "v1 = hello
+///      source /tmp/subshell_test.commands").unwrap();
+///
+/// assert_eq!("foo", context.get_value("v1").unwrap());
+/// assert_eq!("bar", context.get_value("v2").unwrap());
+/// ```
+/// The subshell option ('-s') can be used to isolate changes to the user's context.
+/// ```
+/// use std::fs::File;
+/// use std::io::Write;
+///
+/// let mut file = File::create("/tmp/subshell_test.commands").unwrap();
+/// file.write("v1 = foo
+///             v2 = bar".as_bytes()).unwrap();
+///
+/// let (_, context) = rcore::command::Shell::from_string(
+///     "v1 = hello
+///      source -s /tmp/subshell_test.commands").unwrap();
+///
+/// assert_eq!("hello", context.get_value("v1").unwrap());
+/// assert_eq!(None, context.get_value("v2"));
+/// ```
 pub struct SourceCommand {}
 
 /// Removes a variable.
@@ -135,18 +235,22 @@ pub struct SourceCommand {}
 pub struct UnsetCommand {}
 
 impl Command for AssignCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "assign"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         validate_assigment(command, "=")
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        let var = &command.get(0);
-        let value = &command.get(2);
+        let var = &tokens.get(0);
+        let value = &tokens.get(2);
         debug!("[Assign] setting variable {} = {}", var, value);
         user_context.set_value(var, value);
         Ok(())
@@ -154,31 +258,38 @@ impl Command for AssignCommand {
 }
 
 impl Command for CdCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "cd"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         if command.get(0) == "cd" {
-            if command.len() == 2 {
+            return if command.len() == 2 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "cd <dir>"
+                })
             }
-        } else {
-            Ok(false)
         }
+        Ok(false)
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
-               _io_context: &mut IoContext,
+               io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        match shell.registry.cd(&user_context.pwd, &command.get(1)) {
+        match shell.registry.cd(&user_context.pwd, &tokens.get(1)) {
             Ok(path) => {
+                debug!("[Cd] setting current working directory = {}", path.abs_path());
                 user_context.set_pwd(path.abs_path());
                 Ok(())
             }
-            Err(e) => Err(ShellError::RegistryCommandError {
-                command: command.clone(),
+            Err(e) => Err(ShellError::RegistryError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
                 error: e,
             })
         }
@@ -186,42 +297,52 @@ impl Command for CdCommand {
 }
 
 impl Command for CreateCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "create"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         if command.get(0) == "create" {
-            if command.len() >= 3 {
+            return if command.len() >= 3 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "create <dir> <struct> [args ...]",
+                })
             }
-        } else {
-            Ok(false)
         }
+        Ok(false)
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
-               _io_context: &mut IoContext,
+               io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
         let mut args: Vec<&str> = vec![];
-        for i in 3..command.len() {
-            args.push(&command.get(i));
+        for i in 3..tokens.len() {
+            args.push(&tokens.get(i));
         }
 
-        shell.registry.parsed_create_instance(&user_context.pwd,
-                                              &command.get(1),
-                                              &command.get(2),
-                                              &args).map_err(|e|
-            ShellError::RegistryCommandError {
-                command: command.clone(),
-                error: e,
-            })
+        debug!("[Create] creating instance: dir={}, class={}, args=[{}]",
+            &tokens.get(1), &tokens.get(2), &args.join(", "));
+        shell.registry.parsed_create_instance(
+            &user_context.pwd, &tokens.get(1), &tokens.get(2), &args
+        ).map_err(|e| ShellError::RegistryError {
+            src: io_context.to_source_info(),
+            tokens: tokens.clone(),
+            error: e,
+        })
     }
 }
 
 impl Command for DefaultAssignCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "default_assign"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         validate_assigment(command, ":=")
     }
 
@@ -234,31 +355,48 @@ impl Command for DefaultAssignCommand {
         let var = &command.get(0);
         let value = &command.get(2);
         if log::log_enabled!(Level::Debug) {
-            let replaced_value = user_context.get_value(var).is_some();
-            user_context.set_default_value(var, value);
-            if replaced_value {
+            let replaced_value = user_context.get_value(var);
+            if replaced_value.is_none() {
                 debug!("[DefaultAssign] setting variable {} = {}", var, value);
             } else {
-                debug!("[DefaultAssign] replacing variable {} = {}", var, value);
+                let old_value = replaced_value.unwrap().to_owned();
+                debug!("[DefaultAssign] replacing variable {} = {} (old value = {})",
+                    var, value, old_value);
             }
-        } else {
-            user_context.set_default_value(var, value);
         }
+        user_context.set_default_value(var, value);
         Ok(())
     }
 }
 
 impl Command for EchoCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         Ok(command.get(0) == "echo")
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                _user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
+        return match Self::_write_all(&tokens, io_context) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(ShellError::IoError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
+                error: e,
+            })
+        }
+    }
+}
+
+impl EchoCommand {
+    fn _write_all(command: &&Tokens, io_context: &mut IoContext) -> Result<(), io::Error> {
         for i in 1..command.len() {
             if i != 1 {
                 io_context.write_str(" ")?;
@@ -270,49 +408,65 @@ impl Command for EchoCommand {
 }
 
 impl Command for ExecuteCommand {
-    fn validate(&self, _command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "execute"
+    }
+
+    fn validate(&self, _command: &Tokens) -> Result<bool, CommandValidationError> {
         Ok(true)
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
         let mut args: Vec<&str> = vec![];
-        for i in 1..command.len() {
-            args.push(&command.get(i));
+        for i in 1..tokens.len() {
+            args.push(&tokens.get(i));
         }
 
-        let result = shell.registry.parsed_invoke_method(&user_context.pwd,
-                                                         &command.get(0),
+        debug!("[Execute] invoking method pwd={}, cd={}, args={}",
+            user_context.pwd(), &tokens.get(0), args.join(", "));
+        let result = shell.registry.parsed_invoke_method(user_context.pwd(),
+                                                         &tokens.get(0),
                                                          &args)
-            .map_err(|e| ShellError::RegistryCommandError {
-                command: command.clone(),
+            .map_err(|e| ShellError::RegistryError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
                 error: e,
             })?;
 
-        write_object(io_context, shell, &result)?;
+        write_object(io_context, shell, &result).map_err(|e| ShellError::IoError {
+            src: io_context.to_source_info(),
+            tokens: tokens.clone(),
+            error: e,
+        })?;
         Ok(())
     }
 }
 
 impl Command for LsCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "ls"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         if command.get(0) == "ls" {
-            if command.len() == 1 || command.len() == 2 {
+            return if command.len() == 1 || command.len() == 2 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "ls [dir]"
+                })
             }
-        } else {
-            Ok(false)
         }
+        Ok(false)
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
@@ -320,12 +474,14 @@ impl Command for LsCommand {
         let registry = &shell.registry;
         let mut children: Vec<String> = vec![];
 
-        let cd = if command.len() == 1 { "." } else { &command.get(1) };
+        let cd = if tokens.len() == 1 { "." } else { &tokens.get(1) };
 
-        let path = registry.cd(&user_context.pwd, cd).map_err(|e| ShellError::RegistryError(e))?;
-
-        //for (child_name, child_id) in &path.children {
-        //    let child = registry.paths.get(&child_id).unwrap();
+        let path = registry.cd(&user_context.pwd, cd)
+            .map_err(|e| ShellError::RegistryError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
+                error: e,
+            })?;
 
         for child in path.children(&registry) {
             let mut child_str = String::new();
@@ -378,7 +534,14 @@ impl Command for LsCommand {
 
         children.sort();
         for child in children {
-            io_context.write_string(child)?;
+            let e = io_context.write_string(child).err();
+            if e.is_some() {
+                return Err(ShellError::IoError {
+                    src: io_context.to_source_info(),
+                    tokens: tokens.clone(),
+                    error: e.unwrap(),
+                })
+            }
         }
 
         Ok(())
@@ -386,7 +549,7 @@ impl Command for LsCommand {
 }
 
 fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
-                -> Result<(), ShellError> {
+                -> Result<(), io::Error> {
     match result {
         PolarValue::Integer(i) => io_context.write_string(format!("{}", i)),
         PolarValue::Float(f) => io_context.write_string(format!("{}", f)),
@@ -435,12 +598,18 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
 }
 
 impl Command for MkDirCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "mkdir"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         if command.get(0) == "mkdir" {
             return if command.len() == 2 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "mkdir <dir>"
+                })
             };
         }
         Ok(false)
@@ -449,50 +618,68 @@ impl Command for MkDirCommand {
     fn execute(&self,
                tokens: &Tokens,
                user_context: &mut UserContext,
-               _io_context: &mut IoContext,
+               io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        shell.registry.mkdir(&user_context.pwd, &tokens.get(1)).map_err(
-            |e| ShellError::RegistryCommandError {
-                command: tokens.clone(),
+        debug!("[MkDir] creating directories pwd={}, cd={}",
+            user_context.pwd(), tokens.get(1));
+        shell.registry.mkdir(user_context.pwd(), tokens.get(1)).map_err(
+            |e| ShellError::RegistryError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
                 error: e,
             })
     }
 }
 
 impl Command for PwdCommand {
-    fn validate(&self, tokens: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "pwd"
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<bool, CommandValidationError> {
         if tokens.get(0) == "pwd" {
-            if tokens.len() == 1 {
+            return if tokens.len() == 1 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(tokens.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "pwd",
+                })
             }
-        } else {
-            Ok(false)
         }
+        Ok(false)
     }
 
     fn execute(&self,
-               _command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        io_context.write_str(&user_context.pwd)
+        io_context.write_str(&user_context.pwd).map_err(|e| ShellError::IoError {
+            src: io_context.to_source_info(),
+            tokens: tokens.clone(),
+            error: e,
+        })
     }
 }
 
+const MAX_SOURCE_RECURSION: usize = 10;
+
 impl Command for SourceCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "source"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         let len = command.len();
         if command.get(0) == "source" {
-            return if len == 1 {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
-            } else if len == 2 && command.get(1) != "-s" || len >= 3 {
+            return if len == 2 && command.get(1) != "-s" || len >= 3 {
                 Ok(true)
             } else {
-                Err(ShellError::InvalidCommandFormat(command.clone()))
+                Err(CommandValidationError::InvalidCommandFormat {
+                    format: "source [-s] <file>"
+                })
             };
         }
         Ok(false)
@@ -525,16 +712,31 @@ impl Command for SourceCommand {
         // load file
         match File::open(file_name) {
             Ok(f) => {
+                if user_context.level >= MAX_SOURCE_RECURSION {
+                    return Err(ShellError::CommandExecutionError {
+                        src: io_context.to_source_info(),
+                        tokens: tokens.clone(),
+                        error: CommandExecutionError::MaxSourceCommand(user_context.level)
+                    })
+                }
+
                 let mut reader = BufReader::new(f);
                 // the new I/O context has the new file, but the same output
                 let mut new_io_context = IoContext::new(
                     file_name, &mut reader, &mut io_context.output);
+
+                user_context.level += 1;
                 shell.execute_commands(
                     &mut new_user_context, &mut new_io_context, _command_context)?;
+                user_context.level -= 1;
             }
-            Err(error) => return Err(ShellError::UnknownFile {
-                file: file_name.to_owned(),
-                error,
+            Err(error) => return Err(ShellError::CommandExecutionError {
+                src: io_context.to_source_info(),
+                tokens: tokens.clone(),
+                error: CommandExecutionError::UnableToOpenFile {
+                    file: file_name.to_owned(),
+                    error,
+                }
             })
         }
 
@@ -552,18 +754,22 @@ impl Command for SourceCommand {
 }
 
 impl Command for UnsetCommand {
-    fn validate(&self, command: &Tokens) -> Result<bool, ShellError> {
+    fn name(&self) -> &'static str {
+        "unset"
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
         if command.get(0) == "unset" {
             let len = command.len();
             if len == 1 {
-                return Err(ShellError::InvalidCommandFormat(command.clone()));
+                return Err(CommandValidationError::InvalidCommandFormat {
+                    format: "unset [var ...]",
+                });
             }
             for i in 1..len {
                 if !validate_variable(&command.get(i)) {
-                    return Err(ShellError::InvalidVariableName {
-                        command: command.clone(),
-                        var: command.get(i).to_owned(),
-                    });
+                    return Err(CommandValidationError::InvalidVariableName(
+                        command.get(i).to_owned()));
                 }
             }
             return Ok(true);
@@ -602,16 +808,13 @@ fn validate_variable(variable: &str) -> bool {
 }
 
 fn validate_assigment(tokens: &Tokens, sign: &'static str)
-                      -> Result<bool, ShellError> {
+                      -> Result<bool, CommandValidationError> {
 
     if tokens.len() == 3 && tokens.get(1) == sign {
         if validate_variable(tokens.get(0)) {
             Ok(true)
         } else {
-            Err(ShellError::InvalidVariableName {
-                command: tokens.to_owned(),
-                var: tokens.get(0).to_owned(),
-            })
+            Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
         }
     } else {
         Ok(false)
@@ -621,10 +824,10 @@ fn validate_assigment(tokens: &Tokens, sign: &'static str)
 #[cfg(test)]
 mod assign_tests {
     use std::io;
-    use crate::command::commands::{AssignCommand, Command};
+    use crate::command::commands::{AssignCommand, Command, CommandValidationError};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
@@ -653,8 +856,7 @@ mod assign_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidVariableName { command: tokens, var: "12foo".to_owned() },
-                   result);
+        assert_eq!(CommandValidationError::InvalidVariableName("12foo".to_owned()), result);
     }
 
     #[test]
@@ -678,10 +880,10 @@ mod assign_tests {
 #[cfg(test)]
 mod default_assign_tests {
     use std::io;
-    use crate::command::commands::{DefaultAssignCommand, Command};
+    use crate::command::commands::{DefaultAssignCommand, Command, CommandValidationError};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_assignment_command_returns_true() {
@@ -710,10 +912,7 @@ mod default_assign_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidVariableName {
-            command: tokens,
-            var: "12foo".to_owned(),
-        }, result);
+        assert_eq!(CommandValidationError::InvalidVariableName("12foo".to_owned()), result);
     }
 
     #[test]
@@ -756,10 +955,10 @@ mod default_assign_tests {
 #[cfg(test)]
 mod unset_tests {
     use std::io;
-    use crate::command::commands::{Command, UnsetCommand};
+    use crate::command::commands::{Command, CommandValidationError, UnsetCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_unset_command_with_one_variable_returns_true() {
@@ -797,7 +996,9 @@ mod unset_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidCommandFormat(tokens), result);
+        assert_eq!(CommandValidationError::InvalidCommandFormat {
+            format: "unset [var ...]",
+        }, result);
     }
 
     #[test]
@@ -807,8 +1008,7 @@ mod unset_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidVariableName { command: tokens, var: "12foo".to_owned() },
-                   result);
+        assert_eq!(CommandValidationError::InvalidVariableName("12foo".to_owned()), result);
     }
 
     #[test]
@@ -837,10 +1037,10 @@ mod unset_tests {
 #[cfg(test)]
 mod mkdir_tests {
     use std::io;
-    use crate::command::commands::{Command, MkDirCommand};
+    use crate::command::commands::{Command, CommandValidationError, MkDirCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_mkdir_command_returns_true() {
@@ -858,7 +1058,7 @@ mod mkdir_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidCommandFormat(tokens), result);
+        assert_eq!(CommandValidationError::InvalidCommandFormat { format: "mkdir <dir>" }, result);
     }
 
     #[test]
@@ -868,7 +1068,7 @@ mod mkdir_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidCommandFormat(tokens), result);
+        assert_eq!(CommandValidationError::InvalidCommandFormat { format: "mkdir <dir>" }, result);
     }
 
     #[test]
@@ -893,10 +1093,10 @@ mod mkdir_tests {
 #[cfg(test)]
 mod cd_tests {
     use std::io;
-    use crate::command::commands::{Command, CdCommand, MkDirCommand};
+    use crate::command::commands::{Command, CdCommand, MkDirCommand, CommandValidationError};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
 
     #[test]
     fn validate_valid_cd_command_returns_error() {
@@ -905,7 +1105,7 @@ mod cd_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidCommandFormat(tokens), result);
+        assert_eq!(CommandValidationError::InvalidCommandFormat { format: "cd <dir>" }, result);
     }
 
     #[test]
@@ -915,7 +1115,7 @@ mod cd_tests {
 
         let result = command.validate(&tokens).err().unwrap();
 
-        assert_eq!(ShellError::InvalidCommandFormat(tokens), result);
+        assert_eq!(CommandValidationError::InvalidCommandFormat { format: "cd <dir>" }, result);
     }
 
     #[test]
@@ -1010,12 +1210,12 @@ mod echo_tests {
 mod create_tests {
     use std::io;
     use std::io::Cursor;
-    use crate::command::commands::{Command, CreateCommand};
+    use crate::command::commands::{Command, CommandValidationError, CreateCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
     use crate::command::oso::PolarClass;
-    use crate::command::RegistryError;
+    use crate::command::{RegistryError, ShellError};
 
     #[derive(Clone, PolarClass)]
     struct User {
@@ -1055,7 +1255,9 @@ mod create_tests {
 
         let result = command.validate(&token).err().unwrap();
 
-        assert_eq!(result, ShellError::InvalidCommandFormat(token));
+        assert_eq!(result, CommandValidationError::InvalidCommandFormat {
+            format: "create <dir> <struct> [args ...]"
+        });
     }
 
     #[test]
@@ -1068,7 +1270,9 @@ mod create_tests {
 
         let result = command.validate(&token).err().unwrap();
 
-        assert_eq!(result, ShellError::InvalidCommandFormat(token));
+        assert_eq!(result, CommandValidationError::InvalidCommandFormat {
+            format: "create <dir> <struct> [args ...]"
+        });
     }
 
     #[test]
@@ -1124,15 +1328,16 @@ mod create_tests {
         let result = command.execute(
             &tokens, &mut context, &mut io_context, &command_context, &mut shell).err().unwrap();
 
-        assert_eq!(result, ShellError::RegistryCommandError {
-            command: tokens,
+        assert_eq!(result, ShellError::RegistryError {
+            src: io_context.to_source_info(),
+            tokens,
             error: RegistryError::InvalidMethodParameter {
                 class: "rcore::command::commands::create_tests::User".to_owned(),
                 method: "<constructor>".to_owned(),
                 param_index: 0,
                 param_type: "int",
                 reason: "",
-            },
+            }
         })
     }
 }
@@ -1144,9 +1349,9 @@ mod execute_tests {
     use crate::command::commands::{Command, CreateCommand, ExecuteCommand};
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::Tokens;
-    use crate::command::shell::{Shell, ShellError};
+    use crate::command::shell::Shell;
     use crate::command::oso::PolarClass;
-    use crate::command::RegistryError;
+    use crate::command::{RegistryError, ShellError};
 
     #[derive(Clone, PolarClass)]
     struct User {
@@ -1219,23 +1424,24 @@ mod execute_tests {
                     "jgreco".to_owned(),
                     "42".to_owned()
                 ]), &mut context, &mut io_context, &command_context, &mut shell).unwrap();
-        let command = Tokens::new(vec![
+        let tokens = Tokens::new(vec![
                 "/foo/bar/add".to_owned(),
                 "foo".to_owned()
             ]);
 
         let err = ExecuteCommand {}.execute(
-            &command, &mut context, &mut io_context, &command_context, &mut shell).err().unwrap();
+            &tokens, &mut context, &mut io_context, &command_context, &mut shell).err().unwrap();
 
-        assert_eq!(ShellError::RegistryCommandError {
-            command: command,
+        assert_eq!(ShellError::RegistryError {
+            src: io_context.to_source_info(),
             error: RegistryError::InvalidMethodParameter {
                 class: "User".to_owned(),
                 method: "add_one".to_string(),
                 param_index: 0,
                 param_type: "int",
                 reason: "",
-            }
+            },
+            tokens: tokens.clone(),
         }, err);
     }
 }

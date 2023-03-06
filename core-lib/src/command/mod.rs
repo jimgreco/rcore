@@ -1,4 +1,4 @@
-mod commands;
+pub mod commands;
 mod lexer;
 pub mod oso;
 mod registry;
@@ -6,9 +6,11 @@ mod shell;
 mod context;
 
 pub use self::commands::Command;
+pub use self::commands::CommandExecutionError;
 pub use self::context::CommandContext;
-pub use self::context::UserContext;
 pub use self::context::IoContext;
+pub use self::context::SourceInfo;
+pub use self::context::UserContext;
 pub use self::lexer::Tokens;
 pub use self::registry::PathSegment;
 pub use self::registry::Registry;

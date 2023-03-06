@@ -4,7 +4,8 @@ use crate::command::context::{UserContext, IoContext, CommandContext};
 use crate::command::lexer::{lex_command, LexerError, Tokens};
 
 use thiserror::Error;
-use crate::command::{Registry, RegistryError};
+use crate::command::{CommandExecutionError, Registry, RegistryError, SourceInfo};
+use crate::command::commands::CommandValidationError;
 use crate::command::oso::Class;
 
 /// The command shell is used to dynamically instantiate instances of structs, invoke methods on
@@ -54,7 +55,7 @@ use crate::command::oso::Class;
 ///      cd ../..          # pwd = /foo
 ///      pwd").unwrap();
 ///
-/// assert_eq!("/foo", &user_context.pwd);
+/// assert_eq!("/foo", user_context.pwd());
 /// assert_eq!("/foo", &result);
 /// ```
 ///
@@ -82,7 +83,7 @@ use crate::command::oso::Class;
 ///      cd me
 ///      pwd").unwrap();
 ///
-/// assert_eq!("/foo/bar/me", &user_context.pwd);
+/// assert_eq!("/foo/bar/me", user_context.pwd());
 /// assert_eq!("/foo/bar/me", &result);
 /// ```
 ///
@@ -140,33 +141,44 @@ impl Shell {
             let line = io_context.line;
             match lex_command(user_context, io_context) {
                 Some(result) => match result {
-                    Ok(token_group) => {
+                    Ok(tokens) => {
                         if log::log_enabled!(Level::Debug) {
-                            debug!("{}:{}: {}",
-                                io_context.source,
-                                line,
-                                token_group.tokens_string());
+                            debug!("{}:{}: {}",io_context.src,line,tokens.tokens_string());
                         }
 
                         let mut executed = false;
 
                         for command in &command_context.builtin_commands {
-                            if command.validate(&token_group)? {
-                                command.execute(
-                                    &token_group, user_context, io_context, command_context, self)?;
-                                executed = true;
-                                break;
+                            match command.validate(&tokens) {
+                                Ok(valid) => if valid {
+                                    command.execute(
+                                        &tokens, user_context, io_context, command_context, self)?;
+                                    executed = true;
+                                    break;
+                                },
+                                Err(e) => return Err(ShellError::CommandValidationError {
+                                    src: io_context.to_source_info(),
+                                    tokens: tokens.clone(),
+                                    error: e,
+                                })
                             }
                         }
 
                         if !executed {
                             command_context.execute_command.execute(
-                                &token_group, user_context, io_context, command_context, self)?;
+                                &tokens, user_context, io_context, command_context, self)?;
                         }
                     }
                     Err(e) => return Err(match e {
-                        LexerError::IoError { error, .. } => ShellError::IoError(error),
-                        e => ShellError::LexerError(e)
+                        LexerError::IoError(e) => ShellError::IoError {
+                            src: io_context.to_source_info(),
+                            tokens: Tokens::new(vec![]),
+                            error: e,
+                        },
+                        e => ShellError::LexerError {
+                            src: io_context.to_source_info(),
+                            error: e,
+                        }
                     })
                 }
                 None => return Ok(())
@@ -205,50 +217,55 @@ impl Shell {
 /// Errors thrown executing commands by the shell.
 #[derive(Debug, Error)]
 pub enum ShellError {
-    #[error(transparent)]
-    LexerError(LexerError),
-    #[error("Error executing command on the registry: {command}, error={error}")]
-    RegistryCommandError {
-        command: Tokens,
-        error: RegistryError,
+    #[error("{src}: {error}")]
+    LexerError {
+        src: SourceInfo,
+        error: LexerError
     },
-    #[error("Error accessing the registry: {0}")]
-    RegistryError(RegistryError),
-    #[error("File does not exist: {file}, error={error}")]
-    UnknownFile {
-        file: String,
-        error: io::Error,
+    #[error("{src}: tokens={tokens}, {error}")]
+    IoError {
+        src: SourceInfo,
+        tokens: Tokens,
+        error: io::Error
     },
-    #[error("invalid variable name: {var}, command={command}")]
-    InvalidVariableName {
-        command: Tokens,
-        var: String,
+    #[error("{src}: tokens={tokens}, {error}")]
+    RegistryError {
+        src: SourceInfo,
+        tokens: Tokens,
+        error: RegistryError
     },
-    #[error("invalid formatted command: {0}")]
-    InvalidCommandFormat(Tokens),
-    #[error("unknown command: {0}")]
-    UnknownCommand(Tokens),
-    #[error("I/O error: {0}")]
-    IoError(io::Error),
+    #[error("{src}: tokens={tokens}, {error}")]
+    CommandValidationError {
+        src: SourceInfo,
+        tokens: Tokens,
+        error: CommandValidationError
+    },
+    #[error("{src}: tokens={tokens}, {error}")]
+    CommandExecutionError {
+        src: SourceInfo,
+        tokens: Tokens,
+        error: CommandExecutionError
+    },
 }
 
 impl PartialEq for ShellError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (ShellError::LexerError(e1), ShellError::LexerError(e2))
-            => e1 == e2,
-            (ShellError::RegistryCommandError { command, error },
-                ShellError::RegistryCommandError { command: command2, error: error2 })
-            => command == command2 && error == error2,
-            (ShellError::UnknownFile { file, .. }, ShellError::UnknownFile { file: file2, .. })
-            => file == file2,
-            (ShellError::InvalidVariableName { command, var },
-                ShellError::InvalidVariableName { command: command2, var: var2 })
-            => command.eq(command2) && var.eq(var2),
-            (ShellError::InvalidCommandFormat(e1), ShellError::InvalidCommandFormat(e2))
-            => e1.eq(e2),
-            (ShellError::UnknownCommand(e1), ShellError::UnknownCommand(e2))
-            => e1.eq(e2),
+            (ShellError::LexerError{ src, error },
+                ShellError::LexerError { src: src2, error: error2})
+            => src == src2 && error == error2,
+            (ShellError::IoError{ src, tokens, .. },
+                ShellError::IoError { src: src2, tokens: tokens2, .. })
+            => src == src2 && tokens == tokens2,
+            (ShellError::RegistryError{ src, tokens, error },
+                ShellError::RegistryError { src: src2, tokens: tokens2, error: error2 })
+            => src == src2 && tokens == tokens2 && error == error2,
+            (ShellError::CommandValidationError{ src, tokens, error },
+                 ShellError::CommandValidationError { src: src2, tokens: tokens2, error: error2 })
+            => src == src2 && tokens == tokens2 && error == error2,
+            (ShellError::CommandExecutionError{ src, tokens, error },
+                ShellError::CommandExecutionError { src: src2, tokens: tokens2, error: error2 })
+            => src == src2 && tokens == tokens2 && error == error2,
             _ => false
         }
     }
@@ -262,6 +279,7 @@ impl PartialEq for ShellError {
 mod tests {
     use std::io;
     use std::io::Cursor;
+    use crate::command::commands::CommandValidationError;
     use crate::command::context::{UserContext, IoContext, CommandContext};
     use crate::command::lexer::{LexerError, Tokens};
     use crate::command::shell::{Shell, ShellError};
@@ -308,11 +326,9 @@ do12 = goo".as_bytes());
 
         let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
 
-        assert_eq!(ShellError::LexerError(LexerError::UnterminatedQuote {
-            src: "test".to_owned(),
-            line: 2,
-            col: 7,
-        }), result);
+        assert_eq!(ShellError::LexerError{
+            src: io_context.to_source_info(),
+            error: LexerError::UnterminatedQuote}, result);
     }
 
     #[test]
@@ -326,9 +342,10 @@ do12 = goo".as_bytes());
 
         let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
 
-        assert_eq!(ShellError::InvalidVariableName {
-            command: Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]),
-            var: "12foo".to_string(),
+        assert_eq!(ShellError::CommandValidationError {
+            src: io_context.to_source_info(),
+            error: CommandValidationError::InvalidVariableName("12foo".to_owned()),
+            tokens: Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]),
         }, result);
     }
 }
