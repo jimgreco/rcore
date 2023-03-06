@@ -7,68 +7,35 @@ use crate::command::context::{UserContext, IoContext};
 /// Errors thrown lexing commands from the command file.
 #[derive(Debug, Error)]
 pub enum LexerError {
-    #[error("{src}:{line}:{col}: the command contains an unterminated quote")]
-    UnterminatedQuote {
-        src: String,
-        line: usize,
-        col: usize,
-    },
-    #[error("{src}:{line}:{col}: the escaped character is not in quotes")]
-    EscapedCharacterNotInQuotes {
-        src: String,
-        line: usize,
-        col: usize,
-    },
-    #[error("{src}:{line}:{col}: '{char}' is an invalid escaped character")]
-    InvalidEscapedCharacterFormat {
-        src: String,
-        line: usize,
-        col: usize,
-        char: String,
-    },
-    #[error("{src}:{line}:{col}: {var} is an unknown variable")]
-    UnknownVariable {
-        src: String,
-        line: usize,
-        col: usize,
-        var: String,
-    },
-    #[error("{src}:{line}:{col}: the variable is in an unknown format")]
-    InvalidVariableFormat {
-        src: String,
-        line: usize,
-        col: usize,
-    },
-    #[error("{src}:{line}:{col}: I/O error: {error}")]
-    IoError {
-        src: String,
-        line: usize,
-        col: usize,
-        error: io::Error,
-    },
+    #[error("the command contains an unterminated quote")]
+    UnterminatedQuote,
+    #[error("the escaped character is not in quotes")]
+    EscapedCharacterNotInQuotes,
+    #[error("'{0}' is an invalid escaped character")]
+    InvalidEscapedCharacterFormat(String),
+    #[error("{0} is an unknown variable")]
+    UnknownVariable(String),
+    #[error("the variable is in an unknown format")]
+    InvalidVariableFormat,
+    #[error("I/O error: {0}")]
+    IoError(io::Error),
 }
 
 impl PartialEq for LexerError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (LexerError::UnterminatedQuote { src, line, col },
-                LexerError::UnterminatedQuote { src: src2, line: line2, col: col2 })
-            => src == src2 && line == line2 && col == col2,
-            (LexerError::EscapedCharacterNotInQuotes { src, line, col },
-                LexerError::EscapedCharacterNotInQuotes { src: src2, line: line2, col: col2 })
-            => src == src2 && line == line2 && col == col2,
-            (LexerError::InvalidEscapedCharacterFormat { src, line, col, char },
-                LexerError::InvalidEscapedCharacterFormat { src: src2, line: line2, col: col2, char: char2 })
-            => src == src2 && line == line2 && col == col2 && char == char2,
-            (LexerError::UnknownVariable { src, line, col, var },
-                LexerError::UnknownVariable { src: src2, line: line2, col: col2, var: var2 })
-            => src == src2 && line == line2 && col == col2 && var == var2,
-            (LexerError::InvalidVariableFormat { src, line, col },
-                LexerError::InvalidVariableFormat { src: src2, line: line2, col: col2 })
-            => src == src2 && line == line2 && col == col2,
-            (LexerError::IoError { src, line, col, .. },
-                LexerError::IoError { src: src2, line: line2, col: col2, .. })
-            => src == src2 && line == line2 && col == col2,
+            (LexerError::UnterminatedQuote,
+                LexerError::UnterminatedQuote) => true,
+            (LexerError::EscapedCharacterNotInQuotes,
+                LexerError::EscapedCharacterNotInQuotes) => true,
+            (LexerError::InvalidEscapedCharacterFormat(char),
+                LexerError::InvalidEscapedCharacterFormat(char2)) => char == char2,
+            (LexerError::UnknownVariable(var),
+                LexerError::UnknownVariable(var2)) => var == var2,
+            (LexerError::InvalidVariableFormat,
+                LexerError::InvalidVariableFormat) => true,
+            (LexerError::IoError(_),
+                LexerError::IoError(_)) => true,
             _ => false
         }
     }
@@ -78,21 +45,58 @@ impl PartialEq for LexerError {
     }
 }
 
+/// The tokens for a single command.
 #[derive(Debug, PartialEq, Clone)]
-pub struct TokenGroup {
-    pub line: usize,
-    pub tokens: Vec<String>,
-}
+pub struct Tokens(Vec<String>);
 
-impl TokenGroup {
-    pub fn tokens_string(&self) -> String {
-        self.tokens_substring(0, self.tokens.len())
+impl Tokens {
+    pub(crate) fn all(&self) -> &Vec<String> {
+        &self.0
     }
 
+    /// Creates a new [Tokens] instance from the specified vector of strings.
+    pub fn new(tokens: Vec<String>) -> Tokens {
+        Tokens(tokens)
+    }
+
+    /// The number of tokens.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the token of the specified index.
+    pub fn get(&self, index: usize) -> &str {
+        &self.0[index]
+    }
+
+    /// Combines all tokens into a string.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Tokens;
+    ///
+    /// let tokens = Tokens::new(vec!["foo".to_owned(), "bar soo".to_owned(), "me".to_owned()]);
+    ///
+    /// assert_eq!("\"foo\" \"bar soo\" \"me\"", tokens.tokens_string())
+    /// ```
+    pub fn tokens_string(&self) -> String {
+        self.tokens_substring(0, self.len())
+    }
+
+    /// Combines all tokens into a string for the specified indices.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Tokens;
+    ///
+    /// let tokens = Tokens::new(vec!["foo".to_owned(), "bar soo".to_owned(), "me".to_owned()]);
+    ///
+    /// assert_eq!("\"bar soo\" \"me\"", tokens.tokens_substring(1, 3))
+    /// ```
     pub fn tokens_substring(&self, start: usize, end: usize) -> String {
         let mut str = "".to_owned();
         let mut first = true;
-        for token in &self.tokens[start..end] {
+        for token in &self.0[start..end] {
             if !first {
                 str.push(' ');
             }
@@ -105,18 +109,21 @@ impl TokenGroup {
     }
 }
 
-impl fmt::Display for TokenGroup {
+impl fmt::Display for Tokens {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: ", self.line)?;
-        for token in self.tokens.iter() {
-            write!(f, " \"{}\"", token)?;
+        for i in 1..self.len() {
+            let token = self.get(i);
+            if i != 1 {
+                write!(f, " ")?;
+            }
+            write!(f, "\"{}\"", token)?;
         }
         write!(f, "")
     }
 }
 
 pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoContext<'a>)
-                              -> Option<Result<TokenGroup, LexerError>> {
+                              -> Option<Result<Tokens, LexerError>> {
     let mut in_quotes = false;
     let mut in_comment = false;
     let mut in_backslash = false;
@@ -124,7 +131,7 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
     let mut tokens: Vec<String> = Vec::new();
     let mut token_cols = 0;
 
-    io_context.column = 1;
+    io_context.col = 1;
     io_context.line += 1;
 
     loop {
@@ -134,22 +141,22 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                     None => {
                         // end of file
                         if in_quotes {
-                            return Some(Err(unterminated_quote(io_context)));
+                            return Some(Err(LexerError::UnterminatedQuote));
                         }
 
                         // add the last token
                         if !token.is_empty() {
                             tokens.push(match expand(
-                                user_context, &token, in_quotes, io_context) {
+                                user_context, &token, in_quotes) {
                                 Ok(v) => v,
                                 Err(e) => return Some(Err(e))
                             });
                             token.clear();
-                            io_context.column += token_cols;
+                            io_context.col += token_cols;
                         }
 
                         if tokens.len() > 0 {
-                            let group = TokenGroup { line: io_context.line, tokens };
+                            let group = Tokens(tokens);
                             return Some(Ok(group));
                         } else {
                             return None;
@@ -161,35 +168,35 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                         if c == b'\n' {
                             // end of line
                             if in_quotes {
-                                return Some(Err(unterminated_quote(io_context)));
+                                return Some(Err(LexerError::UnterminatedQuote));
                             }
 
                             // add the last token
                             if !token.is_empty() {
-                                tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                tokens.push(match expand(user_context, &token, in_quotes) {
                                     Ok(v) => v,
                                     Err(e) => return Some(Err(e))
                                 });
                                 token.clear();
-                                io_context.column += token_cols;
+                                io_context.col += token_cols;
                                 token_cols = 0;
                             }
 
                             // continue to the next line if the last character is a backslash
                             if !in_backslash && tokens.len() > 0 {
-                                let group = TokenGroup { line: io_context.line, tokens };
+                                let group = Tokens(tokens);
                                 return Some(Ok(group));
                             }
 
                             io_context.line += 1;
-                            io_context.column = 0;
+                            io_context.col = 0;
                             in_quotes = false;
                             in_comment = false;
                             in_backslash = false;
                         } else if !in_comment {
                             if in_backslash {
                                 if !in_quotes {
-                                    return Some(Err(invalid_escaped(io_context, c)));
+                                    return Some(Err(invalid_escaped(c)));
                                 }
 
                                 // special characters that are escaped
@@ -200,7 +207,7 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                                 } else if c == b'"' {
                                     token.push('"');
                                 } else {
-                                    return Some(Err(invalid_escaped(io_context, c)));
+                                    return Some(Err(invalid_escaped(c)));
                                 }
 
                                 in_backslash = false;
@@ -211,12 +218,12 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                                 if in_quotes {
                                     // end quotes
                                     // include zero length tokens
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                    tokens.push(match expand(user_context, &token, in_quotes) {
                                         Ok(v) => v,
                                         Err(e) => return Some(Err(e))
                                     });
                                     token.clear();
-                                    io_context.column += token_cols;
+                                    io_context.col += token_cols;
                                     token_cols = 0;
                                 }
                                 in_quotes = !in_quotes
@@ -224,12 +231,12 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                                 // start of comment
                                 // add the last token
                                 if !token.is_empty() {
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                    tokens.push(match expand(user_context, &token, in_quotes) {
                                         Ok(v) => v,
                                         Err(e) => return Some(Err(e))
                                     });
                                     token.clear();
-                                    io_context.column += token_cols;
+                                    io_context.col += token_cols;
                                     token_cols = 0;
                                 }
 
@@ -240,12 +247,12 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                                     token.push(c as char);
                                 } else if !token.is_empty() {
                                     // end the current token
-                                    tokens.push(match expand(user_context, &token, in_quotes, io_context) {
+                                    tokens.push(match expand(user_context, &token, in_quotes) {
                                         Ok(v) => v,
                                         Err(e) => return Some(Err(e))
                                     });
                                     token.clear();
-                                    io_context.column += token_cols;
+                                    io_context.col += token_cols;
                                     token_cols = 0;
                                 }
                                 // otherwise, ignore whitespace
@@ -258,19 +265,13 @@ pub(crate) fn lex_command<'a>(user_context: &UserContext, io_context: &mut IoCon
                 }
             }
             Err(e) => {
-                return Some(Err(LexerError::IoError {
-                    src: io_context.source.to_owned(),
-                    line: io_context.line,
-                    col: io_context.column,
-                    error: e,
-                }));
+                return Some(Err(LexerError::IoError(e)));
             }
         }
     }
 }
 
-fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContext)
-          -> Result<String, LexerError> {
+fn expand(context: &UserContext, token: &str, in_quotes: bool) -> Result<String, LexerError> {
     let mut first_char = true;
     let mut in_replace = false;
     let mut in_replace_first_char = false;
@@ -287,17 +288,17 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                 if in_replace {
                     if in_replace_first_char || has_curly_brackets {
                         // $ at the end of a line or missing the closing curly bracket ${foo}
-                        return Err(invalid_var_format(source));
+                        return Err(LexerError::InvalidVariableFormat);
                     } else if variable.is_empty() {
                         // end of argument
                         match context.get_argument(argument) {
-                            None => return Err(unknown_arg(source, argument)),
+                            None => return Err(LexerError::UnknownVariable(argument.to_string())),
                             Some(arg) => expanded.push_str(arg)
                         }
                     } else {
                         // end of variable
                         match context.get_value(&variable) {
-                            None => return Err(unknown_var(source, &variable)),
+                            None => return Err(LexerError::UnknownVariable(variable.to_owned())),
                             Some(arg) => expanded.push_str(arg)
                         }
                     }
@@ -312,7 +313,7 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                         // first char decides whether we are in an argument or variable
                         if c == '$' {
                             if has_curly_brackets {
-                                return Err(invalid_var_format(source));
+                                return Err(LexerError::InvalidVariableFormat);
                             }
 
                             // double dollar sign is just a dollar sign character
@@ -324,14 +325,14 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                             argument = usize::try_from(c.to_digit(10).unwrap()).unwrap();
                             in_replace_first_char = false;
                         } else if c.is_alphabetic() {
-                            // variables start with an alphabetic character and then are alphanumeric
+                            // variables start with an alphabetic character and then alphanumeric
                             variable.push(c);
                             in_replace_first_char = false;
                         } else if c == '{' {
                             // skip over curly bracket, ${foo}
                             has_curly_brackets = true;
                         } else {
-                            return Err(invalid_var_format(source));
+                            return Err(LexerError::InvalidVariableFormat);
                         }
                     } else {
                         // second+ char
@@ -344,11 +345,12 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                                 argument *= 10;
                                 argument += usize::try_from(c.to_digit(10).unwrap()).unwrap();
                             } else if !in_quotes && (c.is_alphabetic() || c == '$') {
-                                return Err(invalid_var_format(source));
+                                return Err(LexerError::InvalidVariableFormat);
                             } else {
                                 // finished reading the argument, get the value
                                 match context.get_argument(argument) {
-                                    None => return Err(unknown_arg(source, argument)),
+                                    None => return Err(
+                                        LexerError::UnknownVariable(argument.to_string())),
                                     Some(arg) => expanded.push_str(arg)
                                 }
                                 argument = 0;
@@ -360,11 +362,12 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                                 // add to variable name
                                 variable.push(c);
                             } else if !in_quotes && c == '$' {
-                                return Err(escaped_no_quotes(source));
+                                return Err(LexerError::EscapedCharacterNotInQuotes);
                             } else {
                                 // finished reading the variable, get the value out
                                 match context.get_value(&variable) {
-                                    None => return Err(unknown_var(source, &variable)),
+                                    None => return Err(
+                                        LexerError::UnknownVariable(variable.to_owned())),
                                     Some(arg) => expanded.push_str(arg)
                                 }
                                 variable.clear();
@@ -375,7 +378,7 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                         if did_expansion {
                             if has_curly_brackets {
                                 if c != '}' {
-                                    return Err(invalid_var_format(source));
+                                    return Err(LexerError::InvalidVariableFormat);
                                 }
                                 in_replace = false;
                                 has_curly_brackets = false;
@@ -392,7 +395,7 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
                         in_replace = true;
                         in_replace_first_char = true;
                     } else {
-                        return Err(escaped_no_quotes(source));
+                        return Err(LexerError::EscapedCharacterNotInQuotes);
                     }
                 } else {
                     // regular character
@@ -405,57 +408,10 @@ fn expand(context: &UserContext, token: &str, in_quotes: bool, source: &IoContex
     }
 }
 
-fn unterminated_quote(source: &IoContext) -> LexerError {
-    LexerError::UnterminatedQuote {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-    }
-}
-
-fn invalid_escaped(source: &IoContext, character: u8) -> LexerError {
+fn invalid_escaped(character: u8) -> LexerError {
     let mut str = "\\".to_owned();
     str.push(character as char);
-    LexerError::InvalidEscapedCharacterFormat {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-        char: str,
-    }
-}
-
-fn unknown_var(source: &IoContext, variable: &str) -> LexerError {
-    LexerError::UnknownVariable {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-        var: variable.to_owned(),
-    }
-}
-
-fn unknown_arg(source: &IoContext, argument: usize) -> LexerError {
-    LexerError::UnknownVariable {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-        var: argument.to_string(),
-    }
-}
-
-fn invalid_var_format(source: &IoContext) -> LexerError {
-    LexerError::InvalidVariableFormat {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-    }
-}
-
-fn escaped_no_quotes(source: &IoContext) -> LexerError {
-    LexerError::EscapedCharacterNotInQuotes {
-        src: source.source.to_owned(),
-        line: source.line,
-        col: source.column,
-    }
+    LexerError::InvalidEscapedCharacterFormat(str)
 }
 
 #[cfg(test)]
@@ -463,11 +419,11 @@ mod tests {
     use std::io;
     use std::io::{Cursor};
     use crate::command::context::{UserContext, IoContext};
-    use crate::command::lexer::{lex_command, LexerError, TokenGroup};
+    use crate::command::lexer::{lex_command, LexerError, Tokens};
 
     fn lex_all_commands(context: &UserContext, source: &mut IoContext)
-                        -> Result<Vec<TokenGroup>, LexerError> {
-        let mut tokens: Vec<TokenGroup> = vec![];
+                        -> Result<Vec<Tokens>, LexerError> {
+        let mut tokens: Vec<Tokens> = vec![];
         loop {
             match lex_command(context, source) {
                 None => return Ok(tokens),
@@ -484,7 +440,7 @@ mod tests {
         a $1 multiple line \\
         command
         another";
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("testing123");
         context.add_argument("testing456");
         context.set_value("wtf", "foo");
@@ -509,7 +465,7 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io);
 
@@ -522,15 +478,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
-        assert_eq!(LexerError::UnterminatedQuote {
-            src: "test".to_owned(),
-            line: 1,
-            col: 5,
-        }, result);
+        assert_eq!(LexerError::UnterminatedQuote, result);
     }
 
     #[test]
@@ -540,15 +492,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
-        assert_eq!(LexerError::UnterminatedQuote {
-            src: "test".to_owned(),
-            line: 1,
-            col: 5,
-        }, result);
+        assert_eq!(LexerError::UnterminatedQuote, result);
     }
 
     #[test]
@@ -557,16 +505,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io).unwrap().err().unwrap();
 
-        assert_eq!(LexerError::InvalidEscapedCharacterFormat {
-            src: "test".to_owned(),
-            line: 1,
-            col: 5,
-            char: "\\^".to_owned(),
-        }, result);
+        assert_eq!(LexerError::InvalidEscapedCharacterFormat("\\^".to_owned()), result);
     }
 
     #[test]
@@ -575,11 +518,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands = lex_command(&context, &mut io).unwrap();
 
-        assert_eq!("bar \n me \" now \\ abc ", commands.unwrap().tokens[1]);
+        assert_eq!("bar \n me \" now \\ abc ", commands.unwrap().get(1));
     }
 
     #[test]
@@ -588,10 +531,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(1, commands.len());
         assert_eq!("foo_/_bar", commands[0]);
@@ -605,10 +548,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -628,10 +571,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -645,10 +588,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(1, commands.len());
         assert_eq!("foo_/_bar", commands[0]);
@@ -662,10 +605,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(2, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner_/_But_/_he_/_knew it couldn't_/_last",
@@ -679,10 +622,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         let tokens = &commands[0];
         assert_eq!(3, tokens.len());
@@ -697,17 +640,12 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::InvalidEscapedCharacterFormat {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-            char: "\\\"".to_owned(),
-        }, result);
+        assert_eq!(LexerError::InvalidEscapedCharacterFormat("\\\"".to_owned()), result);
     }
 
     #[test]
@@ -718,10 +656,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(2, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man_/_who_/_thought_/_he_/_was_/_a_/_loner", commands[0]);
@@ -736,10 +674,10 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let context = UserContext::new();
+        let context = UserContext::default();
 
         let commands: Vec<String> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.join("_/_")).collect();
+            .unwrap().iter().map(|r| r.all().join("_/_")).collect();
 
         assert_eq!(3, commands.len());
         assert_eq!("Jojo_/_was_/_a_/_man", commands[0]);
@@ -753,11 +691,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -768,17 +706,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let commands = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, commands);
+        assert_eq!(LexerError::EscapedCharacterNotInQuotes, commands);
     }
 
     #[test]
@@ -787,18 +721,14 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
         let commands = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, commands);
+        assert_eq!(LexerError::InvalidVariableFormat, commands);
     }
 
     #[test]
@@ -807,12 +737,12 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument(" left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }
@@ -823,11 +753,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -838,18 +768,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::UnknownVariable {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-            var: "1".to_owned(),
-        }, result);
+        assert_eq!(LexerError::UnknownVariable("1".to_owned()), result);
     }
 
     #[test]
@@ -858,13 +783,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("Jojo");
         context.add_argument("left");
         context.add_argument("his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left", commands[0][0]);
         assert_eq!("his home", commands[0][1]);
@@ -876,11 +801,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument("12");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("12345", commands[0][0]);
     }
@@ -891,11 +816,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -906,17 +831,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", " left his home");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, result);
+        assert_eq!(LexerError::EscapedCharacterNotInQuotes, result);
     }
 
     #[test]
@@ -925,11 +846,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", " left his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0])
     }
@@ -940,18 +861,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.add_argument(" left his home");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::UnknownVariable {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-            var: "1".to_owned(),
-        }, result);
+        assert_eq!(LexerError::UnknownVariable("1".to_owned()), result);
     }
 
     #[test]
@@ -960,13 +876,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo");
         context.set_value("bar", "left");
         context.set_value("me", "his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left", commands[0][0]);
         assert_eq!("his home", commands[0][1]);
@@ -978,18 +894,14 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::EscapedCharacterNotInQuotes {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, result);
+        assert_eq!(LexerError::EscapedCharacterNotInQuotes, result);
     }
 
     #[test]
@@ -998,12 +910,12 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left");
         context.set_value("bar", " his home");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }
@@ -1014,11 +926,11 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left ");
 
         let commands: Vec<Vec<String>> = lex_all_commands(&context, &mut io)
-            .unwrap().iter().map(|r| r.tokens.clone()).collect();
+            .unwrap().iter().map(|r| r.all().clone()).collect();
 
         assert_eq!("Jojo left his home", commands[0][0]);
     }
@@ -1029,17 +941,13 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("foo", "Jojo left ");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, result);
+        assert_eq!(LexerError::InvalidVariableFormat, result);
     }
 
     #[test]
@@ -1048,16 +956,12 @@ mod tests {
         let mut cursor = Cursor::new(text.as_bytes());
         let mut sink = io::sink();
         let mut io = IoContext::new("test", &mut cursor, &mut sink);
-        let mut context = UserContext::new();
+        let mut context = UserContext::default();
         context.set_value("f@oo", "Jojo left ");
 
         let result = lex_command(&context, &mut io)
             .unwrap().err().unwrap();
 
-        assert_eq!(LexerError::InvalidVariableFormat {
-            src: "test".to_owned(),
-            line: 1,
-            col: 1,
-        }, result);
+        assert_eq!(LexerError::InvalidVariableFormat, result);
     }
 }

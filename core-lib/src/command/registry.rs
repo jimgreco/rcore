@@ -1,44 +1,104 @@
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Iter;
 use std::fmt::Debug;
 use std::ptr::eq;
 use std::str::FromStr;
 
-extern crate rand;
-
+use rand;
 use thiserror::Error;
 
 use super::oso::{
     builtins, Class, Instance, OsoError, PolarValue, FromPolar, Host, ToPolar, Constructor,
-    InstanceMethod,
+    InstanceMethod, AttributeGetter
 };
 
+/// A path segment is a single node in the directory tree.
 #[derive(Debug)]
-pub struct Path {
+pub struct PathSegment {
     id: usize,
-    pub name: String,
+    name: String,
     parent: Option<usize>,
-    pub(crate) children: HashMap<String, usize>,
-    pub full_path: String,
-    pub(crate) instance: Option<Instance>,
-    pub(crate) owner: Option<usize>,
-    pub(crate) attr: Option<&'static str>,
-    pub(crate) method: Option<&'static str>,
+    children: HashMap<String, usize>,
+    abs_path: String,
+    instance: Option<Instance>,
+    owner: Option<usize>,
+    /// The name of the attribute associated with this node.
+    pub attr: Option<&'static str>,
+    /// The name of the method associated with this node.
+    pub method: Option<&'static str>,
 }
 
-impl PartialEq for Path {
+impl PathSegment {
+    /// Returns the name of the path segment.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the absolute path to the segment.
+    pub fn abs_path(&self) -> &str {
+        &self.abs_path
+    }
+
+    /// Returns the instance associated with the path segment.
+    pub fn instance(&self) -> Option<&Instance> {
+        self.instance.as_ref()
+    }
+
+    /// Returns the instance that owns the method or attribute associated with this path segment.
+    pub fn owner_instance<'a>(&'a self, reg: &'a Registry) -> Option<&'a Instance> {
+        match self.owner {
+            None => None,
+            // let this explode if we've messed up the registry tree
+            Some(o) => Some(reg.paths.get(&o).unwrap().instance.as_ref().unwrap())
+        }
+    }
+
+    /// Returns true if the path segment has children.
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// Returns an iterator of the path segment's child nodes.
+    pub fn children<'a>(&'a self, reg: &'a Registry) -> PathSegmentIterator {
+        PathSegmentIterator {
+            iterator: self.children.iter(),
+            registry: reg,
+        }
+    }
+}
+
+impl PartialEq for PathSegment {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
+/// An iterator for a path segment's child nodes.
+pub struct PathSegmentIterator<'a> {
+    iterator: Iter<'a, String, usize>,
+    registry: &'a Registry
+}
+
+impl<'a> Iterator for PathSegmentIterator<'a> {
+    type Item = &'a PathSegment;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.iterator.next() {
+            None => None,
+            Some((_, id)) => Some(self.registry.paths.get(&id).unwrap())
+        }
+    }
+}
+
+/// The registry contains the directory tree structure and the "reflection" system.
 pub struct Registry {
-    pub(crate) host: Host,
-    pub(crate) paths: HashMap<usize, Path>,
+    host: Host,
+    paths: HashMap<usize, PathSegment>,
     root_id: usize,
 }
 
-impl Registry {
-    pub fn new() -> Registry {
+impl Default for Registry {
+    fn default() -> Self {
         let mut host = Host::new();
         for class in builtins::classes() {
             host.cache_class(class).expect("builtins failed");
@@ -49,20 +109,24 @@ impl Registry {
             paths: HashMap::new(),
             root_id: rand::random(),
         };
-        reg.paths.insert(reg.root_id, Path {
+        reg.paths.insert(reg.root_id, PathSegment {
             children: HashMap::new(),
             id: reg.root_id,
             instance: None,
             name: "".to_owned(),
             parent: None,
-            full_path: "/".to_owned(),
+            abs_path: "/".to_owned(),
             owner: None,
             method: None,
             attr: None,
         });
         reg
     }
+}
 
+impl Registry {
+    /// Caches a [Class] which describes a struct, a function to create instances ("constructor"),
+    /// getters for the instance's attributes, and its instance functions ("instance methods").
     pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         let class_name = class.fq_name.to_owned();
 
@@ -202,15 +266,19 @@ impl Registry {
     // Create paths
     //
 
-    /// Creates a new directory for the specified working directory and change directory.
+    /// Creates a new directory at the specified path components.
+    /// As with most [Registry] methods, the directory to create is specified with two path
+    /// components, the current working directory (pwd) which is an absolute path and the directory
+    /// to change to (cd) which can be an absolute or relative path.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
-    /// use core::command::Registry;
-    /// let mut registry = Registry::new();
-    /// registry.mkdir("/foo/bar", "soo");
-    /// assert_eq!("/foo/bar/soo", registry.path("/foo/bar/soo").unwrap().full_path);
+    /// let mut registry = rcore::command::Registry::default();
+    ///
+    /// registry.mkdir("/foo/bar", "../soo").unwrap();
+    ///
+    /// assert_eq!("/foo/soo", registry.path("/foo/soo").unwrap().abs_path());
     /// ```
     pub fn mkdir(&mut self, pwd: &str, cd: &str) -> Result<(), RegistryError> {
         self.create_path(pwd, cd, true, None, None, None, None)
@@ -229,24 +297,16 @@ impl Registry {
 
         let segments = Registry::to_path_segments(pwd, cd)?;
         for segment in segments {
-            let mut found = false;
-
-            for (child_name, child_id) in &pwd_node.children {
-                // something is seriously wrong if unwrap fails
-                if child_name == &segment {
-                    pwd_node = self.paths.get(child_id).unwrap();
-                    found = true;
-                    break;
+            pwd_node = match pwd_node.children.get(&segment) {
+                None => {
+                    let id = pwd_node.id;
+                    let full_path = pwd_node.abs_path.to_owned();
+                    let child_id = self.create_child(id, full_path, &segment)?;
+                    created = true;
+                    self.paths.get(&child_id).unwrap()
                 }
-            }
-
-            if !found {
-                let id = pwd_node.id;
-                let full_path = pwd_node.full_path.to_owned();
-                let pwd_id = self.create_child(id, full_path, &segment)?;
-                pwd_node = self.paths.get(&pwd_id).unwrap();
-                created = true;
-            }
+                Some(child_id) => self.paths.get(child_id).unwrap()
+            };
         }
 
         if created || (!fail_on_duplicate && pwd_node.instance.is_none()) {
@@ -262,7 +322,7 @@ impl Registry {
                 path.attr = attr;
                 path.instance = instance;
 
-                let full_path = path.full_path.clone();
+                let full_path = path.abs_path.clone();
                 let id = path.id;
 
                 for (name, method) in instance_methods {
@@ -311,15 +371,15 @@ impl Registry {
                 child: name.to_owned(),
             })
         } else {
-            let path_copy = parent.full_path.clone();
+            let path_copy = parent.abs_path.clone();
             let child_id = rand::random();
-            let child = Path {
+            let child = PathSegment {
                 children: HashMap::new(),
                 id: child_id,
                 instance: None,
                 name: name.to_owned(),
                 parent: Some(parent.id),
-                full_path: match parent.parent {
+                abs_path: match parent.parent {
                     None => path_copy + name,
                     Some(_) => path_copy + "/" + name
                 },
@@ -337,34 +397,40 @@ impl Registry {
     // Navigate Paths
     //
 
-    pub fn cd(&self, pwd: &str, cd: &str) -> Result<&Path, RegistryError> {
+    /// Navigates the directory tree with the specified path components and returns the directory.
+    /// As with most [Registry] methods, the directory to create is specified with two path
+    /// components, the current working directory (pwd) which is an absolute path and the directory
+    /// to change to (cd) which can be an absolute or relative path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut registry = rcore::command::Registry::default();
+    ///
+    /// registry.mkdir("/foo/bar", "../soo").unwrap();
+    ///
+    /// assert_eq!("/foo/soo", registry.path("/foo/soo").unwrap().abs_path());
+    /// ```
+    pub fn cd(&self, pwd: &str, cd: &str) -> Result<&PathSegment, RegistryError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
 
         let segments = Registry::to_path_segments(pwd, cd)?;
         for segment in segments {
-            let mut found = false;
-
-            for (child_name, child_id) in &pwd_node.children {
-                if child_name == &segment {
-                    pwd_node = self.paths.get(child_id).unwrap();
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                return Err(RegistryError::IllegalPathNavigation {
+            pwd_node = match pwd_node.children.get(&segment) {
+                None => return Err(RegistryError::IllegalPathNavigation {
                     pwd: pwd.to_owned(),
                     cd: cd.to_owned(),
                     reason: "unknown path",
-                });
-            }
+                }),
+                Some(child_id) => self.paths.get(child_id).unwrap()
+            };
         }
 
         Ok(pwd_node)
     }
 
-    pub fn path(&self, pwd: &str) -> Result<&Path, RegistryError> {
+    /// Navigates the directory tree with the specified absolute path and returns the directory.
+    pub fn path(&self, pwd: &str) -> Result<&PathSegment, RegistryError> {
         self.cd(pwd, ".")
     }
 
@@ -455,6 +521,11 @@ impl Registry {
     // Class components
     //
 
+    /// Returns the [Class] for the specified [Instance].
+    pub fn class_for_instance(&self, instance: &Instance) -> &Class {
+        instance.class(&self.host).unwrap()
+    }
+
     fn class(&self, class_name: &str) -> Result<&Class, RegistryError> {
         self.host.get_class(class_name).map_err(
             |_| RegistryError::UnknownClass(class_name.to_owned()))
@@ -471,6 +542,9 @@ impl Registry {
     // Create and get instances
     //
 
+    /// Creates the an instance of the specified class with the specified method parameters at the
+    /// specified directory.
+    /// TODO: Example
     pub fn create_instance(&mut self,
                            pwd: &str,
                            cd: &str,
@@ -481,6 +555,12 @@ impl Registry {
         self._create_instance(pwd, cd, class_name, params)
     }
 
+    /// Creates the an instance of the specified class with the specified method parameters at the
+    /// specified directory.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_create_instance(&mut self,
                                   pwd: &str,
                                   cd: &str,
@@ -510,7 +590,11 @@ impl Registry {
         self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
-    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str) -> Result<&T, RegistryError> {
+    /// Returns the value of the instance stored at the specified path and casts it to the
+    /// specified type.
+    /// TODO: Example
+    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str)
+                                      -> Result<&T, RegistryError> {
         let instance = self.instance(pwd, cd)?;
         match instance.downcast::<T>(Some(&self.host)) {
             Ok(value) => Ok(value),
@@ -524,6 +608,8 @@ impl Registry {
         }
     }
 
+    /// Returns the value of the instance stored at the specified path.
+    /// TODO: Example
     pub fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, RegistryError> {
         return match &self.cd(pwd, cd)?.instance {
             None => Err(RegistryError::MissingAtPath {
@@ -536,19 +622,30 @@ impl Registry {
 
     // Get Attributes
 
+    /// Returns the value of the attribute stored at the specified path.
+    /// TODO: Example
+    pub fn instance_attr(&self, instance: &Instance, attr: &AttributeGetter) -> PolarValue {
+        attr.invoke(instance, &self.host).unwrap()
+    }
+
+    /// Returns the value of the attribute stored at the specified path and casts it to the
+    /// specified type.
+    /// TODO: Example
     pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
                                               -> Result<T, RegistryError> {
         let result = self.attr(pwd, cd)?;
         Self::cast::<T>(pwd, cd, "attribute", result)
     }
 
+    /// Returns the value of the attribute stored at the specified path.
+    /// TODO: Example
     pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, RegistryError> {
         let attr_path = self.cd(pwd, cd)?;
         // check that we are an attribute node
         let attr_name = match &attr_path.attr {
             Some(name) => name,
             None => return Err(RegistryError::MissingAtPath {
-                path: attr_path.full_path.to_owned(),
+                path: attr_path.abs_path.to_owned(),
                 expected: "attribute",
             })
         };
@@ -575,6 +672,12 @@ impl Registry {
     // Invoke methods
     //
 
+    /// Invokes the instance method stored at the specified path and casts the return value of the
+    /// instance method to the specified type.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                               pwd: &str,
                                                               cd: &str,
@@ -584,6 +687,12 @@ impl Registry {
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
+    /// Invokes the instance method stored at the specified path and returns the return value of the
+    /// instance method.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: &Vec<&str>)
                                 -> Result<PolarValue, RegistryError> {
         // check that we are an method node
@@ -591,7 +700,7 @@ impl Registry {
         let method_name = match method_path.method {
             Some(name) => name,
             None => return Err(RegistryError::MissingAtPath {
-                path: method_path.full_path.to_owned(),
+                path: method_path.abs_path.to_owned(),
                 expected: "method",
             })
         };
@@ -608,6 +717,10 @@ impl Registry {
         self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
     }
 
+
+    /// Invokes the instance method stored at the specified path and casts the return value of the
+    /// instance method to the specified type.
+    /// TODO: Example
     pub fn invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                        pwd: &str,
                                                        cd: &str,
@@ -617,6 +730,9 @@ impl Registry {
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
+    /// Invokes the instance method stored at the specified path and returns the return value of the
+    /// instance method.
+    /// TODO: Example
     pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
                          -> Result<PolarValue, RegistryError> {
         // check that we are an method node
@@ -624,7 +740,7 @@ impl Registry {
         let method_name = match method_path.method {
             Some(name) => name,
             None => return Err(RegistryError::MissingAtPath {
-                path: method_path.full_path.to_owned(),
+                path: method_path.abs_path.to_owned(),
                 expected: "method",
             })
         };
@@ -785,31 +901,31 @@ mod path_tests {
 
     #[test]
     fn mkdir_absolute_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/bar/me", "/foo").unwrap();
 
         registry.mkdir("/foo", "/bar/soo").unwrap();
 
         let node = registry.path("/bar/soo").unwrap();
-        assert_eq!("/bar/soo", node.full_path);
+        assert_eq!("/bar/soo", node.abs_path);
     }
 
     #[test]
     fn mkdir_creates_child_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
 
         registry.mkdir("/", "foo").unwrap();
 
         let node = registry.path("/foo").unwrap();
         assert_eq!("foo", node.name);
-        assert_eq!("/foo", node.full_path);
+        assert_eq!("/foo", node.abs_path);
         assert_eq!(0, node.children.len());
         assert_eq!(true, node.instance.is_none());
     }
 
     #[test]
     fn mkdir_creates_grandchild_directories() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
 
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
@@ -820,27 +936,27 @@ mod path_tests {
         let great_grandchild = registry.path("/foo/bar/soo").unwrap();
 
         assert_eq!("soo", great_grandchild.name);
-        assert_eq!("/foo/bar/soo", great_grandchild.full_path);
+        assert_eq!("/foo/bar/soo", great_grandchild.abs_path);
         assert_eq!(Some(grandchild.id), great_grandchild.parent);
         assert!(great_grandchild.children.is_empty());
         assert!(great_grandchild.instance.is_none());
 
         assert_eq!("bar", grandchild.name);
-        assert_eq!("/foo/bar", grandchild.full_path);
+        assert_eq!("/foo/bar", grandchild.abs_path);
         assert_eq!(Some(child.id), grandchild.parent);
         let mut children = HashMap::new();
         children.insert("soo".to_owned(), great_grandchild.id);
         assert_eq!(children, grandchild.children);
 
         assert_eq!("foo", child.name);
-        assert_eq!("/foo", child.full_path);
+        assert_eq!("/foo", child.abs_path);
         assert_eq!(Some(root.id), child.parent);
         children.clear();
         children.insert("bar".to_owned(), grandchild.id);
         assert_eq!(children, child.children);
 
         assert_eq!("", root.name);
-        assert_eq!("/", root.full_path);
+        assert_eq!("/", root.abs_path);
         assert_eq!(None, root.parent);
         children.clear();
         children.insert("foo".to_owned(), child.id);
@@ -849,81 +965,81 @@ mod path_tests {
 
     #[test]
     fn mkdir_from_child() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "../soo").unwrap();
 
         let node = registry.path("/foo/soo").unwrap();
-        assert_eq!("/foo/soo", node.full_path);
+        assert_eq!("/foo/soo", node.abs_path);
     }
 
     #[test]
     fn mkdir_with_absolute_path_from_child_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "/soo").unwrap();
 
         let node = registry.path("/soo").unwrap();
-        assert_eq!("/soo", node.full_path);
+        assert_eq!("/soo", node.abs_path);
     }
 
     #[test]
     fn mkdir_with_current_directory() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "./soo").unwrap();
 
         let node = registry.path("/foo/bar/soo").unwrap();
-        assert_eq!("/foo/bar/soo", node.full_path);
+        assert_eq!("/foo/bar/soo", node.abs_path);
     }
 
     #[test]
     fn mkdir_with_empty_directories() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "/foo/bar").unwrap();
 
         registry.mkdir("/foo/bar", "soo///doo").unwrap();
 
         let node = registry.path("/foo/bar/soo/doo").unwrap();
-        assert_eq!("/foo/bar/soo/doo", node.full_path);
+        assert_eq!("/foo/bar/soo/doo", node.abs_path);
     }
 
     #[test]
     fn cd_to_parent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "..").unwrap();
 
-        assert_eq!("/foo/bar", grandchild.full_path);
+        assert_eq!("/foo/bar", grandchild.abs_path);
     }
 
     #[test]
     fn cd_to_grandparent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../").unwrap();
 
-        assert_eq!("/foo", grandchild.full_path);
+        assert_eq!("/foo", grandchild.abs_path);
     }
 
     #[test]
     fn cd_to_great_grandparent() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let grandchild = registry.cd("/foo/bar/soo", "../../../").unwrap();
 
-        assert_eq!("/", grandchild.full_path);
+        assert_eq!("/", grandchild.abs_path);
     }
 
     #[test]
     fn cd_beyond_root_is_error() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "../../../..").err().unwrap();
@@ -937,7 +1053,7 @@ mod path_tests {
 
     #[test]
     fn cd_to_unknown_directory_is_error() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.mkdir("/", "foo/bar/soo").unwrap();
 
         let result = registry.cd("/foo/bar/soo", "doo").err().unwrap();
@@ -985,7 +1101,7 @@ mod registry_tests {
     }
 
     fn create_registry() -> Registry {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.cache_class(User::get_polar_class_builder()
             .set_constructor(User::new, vec!["string"])
             .build()).unwrap();
@@ -1123,7 +1239,7 @@ mod registry_tests {
             "/foo", "add_one", vec![PolarValue::Float(42.0)]).err().unwrap();
 
         assert_eq!(RegistryError::InvalidMethodParameter {
-            class: "core::command::registry::registry_tests::User2".to_string(),
+            class: "rcore::command::registry::registry_tests::User2".to_string(),
             method: "add_one".to_string(),
             param_index: 0,
             param_type: "int",
@@ -1192,7 +1308,7 @@ mod registry_tests {
     }
 
     fn create_registry2() -> Registry {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         let bar_class = Bar::get_polar_class_builder()
             .set_constructor(Bar::default, vec![])
             .build();

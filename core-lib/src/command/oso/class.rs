@@ -44,18 +44,18 @@ fn iterator_not_supported() -> IteratorMethod {
 #[derive(Clone)]
 pub struct Class {
     /// The class name. Defaults to the `std::any::type_name`
-    pub name: String,
+    pub(crate) name: String,
     /// The fully qualified class name
-    pub fq_name: String,
-    pub type_id: TypeId,
+    pub(crate) fq_name: String,
+    pub(crate) type_id: TypeId,
     /// A wrapped method that constructs an instance of `T` from `PolarValue`s
-    pub constructor: Option<Constructor>,
+    pub(crate) constructor: Option<Constructor>,
     /// Methods that return simple attribute lookups on an instance of `T`
-    pub attributes: Attributes,
+    pub(crate) attributes: Attributes,
     /// Instance methods on `T` that expect a list of `PolarValue`s, and an instance of `&T`
-    pub instance_methods: InstanceMethods,
+    pub(crate) instance_methods: InstanceMethods,
     /// Class methods on `T`
-    pub class_methods: ClassMethods,
+    class_methods: ClassMethods,
 
     /// A function that accepts arguments of this class and compares them for equality.
     /// Limitation: Only works on comparisons of the same type.
@@ -321,7 +321,7 @@ where
 /// retrieved using `Instance::downcast`.
 #[derive(Clone)]
 pub struct Instance {
-    pub inner: Arc<dyn std::any::Any + Send + Sync>,
+    inner: Arc<dyn std::any::Any + Send + Sync>,
 
     /// The type name of the Instance, to be used for debugging purposes only.
     /// To get the registered name, use `Instance::name`.
