@@ -90,6 +90,7 @@ impl<'a> Iterator for PathSegmentIterator<'a> {
     }
 }
 
+/// The registry contains the directory tree structure and the "reflection" system.
 pub struct Registry {
     host: Host,
     paths: HashMap<usize, PathSegment>,
@@ -270,7 +271,7 @@ impl Registry {
     /// components, the current working directory (pwd) which is an absolute path and the directory
     /// to change to (cd) which can be an absolute or relative path.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// let mut registry = rcore::command::Registry::default();
@@ -521,7 +522,7 @@ impl Registry {
     //
 
     /// Returns the [Class] for the specified [Instance].
-    pub fn instance_class(&self, instance: &Instance) -> &Class {
+    pub fn class_for_instance(&self, instance: &Instance) -> &Class {
         instance.class(&self.host).unwrap()
     }
 
@@ -541,7 +542,9 @@ impl Registry {
     // Create and get instances
     //
 
-
+    /// Creates the an instance of the specified class with the specified method parameters at the
+    /// specified directory.
+    /// TODO: Example
     pub fn create_instance(&mut self,
                            pwd: &str,
                            cd: &str,
@@ -552,6 +555,12 @@ impl Registry {
         self._create_instance(pwd, cd, class_name, params)
     }
 
+    /// Creates the an instance of the specified class with the specified method parameters at the
+    /// specified directory.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_create_instance(&mut self,
                                   pwd: &str,
                                   cd: &str,
@@ -581,8 +590,11 @@ impl Registry {
         self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
-    pub(crate) fn instance_value<T: 'static>(&self, pwd: &str, cd: &str)
-                                             -> Result<&T, RegistryError> {
+    /// Returns the value of the instance stored at the specified path and casts it to the
+    /// specified type.
+    /// TODO: Example
+    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str)
+                                      -> Result<&T, RegistryError> {
         let instance = self.instance(pwd, cd)?;
         match instance.downcast::<T>(Some(&self.host)) {
             Ok(value) => Ok(value),
@@ -596,6 +608,8 @@ impl Registry {
         }
     }
 
+    /// Returns the value of the instance stored at the specified path.
+    /// TODO: Example
     pub fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, RegistryError> {
         return match &self.cd(pwd, cd)?.instance {
             None => Err(RegistryError::MissingAtPath {
@@ -608,16 +622,23 @@ impl Registry {
 
     // Get Attributes
 
+    /// Returns the value of the attribute stored at the specified path.
+    /// TODO: Example
     pub fn instance_attr(&self, instance: &Instance, attr: &AttributeGetter) -> PolarValue {
         attr.invoke(instance, &self.host).unwrap()
     }
 
+    /// Returns the value of the attribute stored at the specified path and casts it to the
+    /// specified type.
+    /// TODO: Example
     pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
                                               -> Result<T, RegistryError> {
         let result = self.attr(pwd, cd)?;
         Self::cast::<T>(pwd, cd, "attribute", result)
     }
 
+    /// Returns the value of the attribute stored at the specified path.
+    /// TODO: Example
     pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, RegistryError> {
         let attr_path = self.cd(pwd, cd)?;
         // check that we are an attribute node
@@ -651,6 +672,12 @@ impl Registry {
     // Invoke methods
     //
 
+    /// Invokes the instance method stored at the specified path and casts the return value of the
+    /// instance method to the specified type.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                               pwd: &str,
                                                               cd: &str,
@@ -660,6 +687,12 @@ impl Registry {
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
+    /// Invokes the instance method stored at the specified path and returns the return value of the
+    /// instance method.
+    ///
+    /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
+    /// definition.
+    /// TODO: Example
     pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: &Vec<&str>)
                                 -> Result<PolarValue, RegistryError> {
         // check that we are an method node
@@ -684,6 +717,10 @@ impl Registry {
         self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
     }
 
+
+    /// Invokes the instance method stored at the specified path and casts the return value of the
+    /// instance method to the specified type.
+    /// TODO: Example
     pub fn invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                        pwd: &str,
                                                        cd: &str,
@@ -693,6 +730,9 @@ impl Registry {
         Self::cast::<T>(pwd, cd, "method", result)
     }
 
+    /// Invokes the instance method stored at the specified path and returns the return value of the
+    /// instance method.
+    /// TODO: Example
     pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
                          -> Result<PolarValue, RegistryError> {
         // check that we are an method node

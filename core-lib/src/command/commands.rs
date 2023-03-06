@@ -60,7 +60,7 @@ impl PartialEq for CommandExecutionError {
 
 /// A command is an operation that can be executed in the Shell.
 pub trait Command {
-    /// Returns the name of the keyword.
+    /// Returns the keyword to identify this command (e.g., "create").
     fn keyword(&self) -> &'static str;
 
     /// Returns the position of the keyword.
@@ -108,6 +108,7 @@ pub struct AssignCommand {}
 pub struct CdCommand {}
 
 /// Creates an instance of a struct.
+/// TODO: Example
 pub struct CreateCommand {}
 
 /// Assigns a value to a variable if it is not already assigned.
@@ -143,6 +144,7 @@ pub struct DefaultAssignCommand {}
 pub struct EchoCommand {}
 
 /// Invokes a method or retrieves the value of an attribute on an instance.
+/// TODO: Example
 pub struct ExecuteCommand {}
 
 /// Lists the contents of a directory
@@ -528,13 +530,13 @@ impl Command for LsCommand {
 
             if child.instance().is_some() {
                 let instance = child.instance().unwrap();
-                let class = registry.instance_class(instance);
+                let class = registry.class_for_instance(instance);
 
                 child_str.push(' ');
                 child_str.push_str(&class.name);
             } else if child.method.is_some() {
                 let instance = child.owner_instance(&registry).unwrap();
-                let class = registry.instance_class(instance);
+                let class = registry.class_for_instance(instance);
                 let method_name = child.method.unwrap();
                 let method = class.instance_methods.get(method_name).unwrap();
 
@@ -555,7 +557,7 @@ impl Command for LsCommand {
 
             } else if child.attr.is_some() {
                 let instance = child.owner_instance(&registry).unwrap();
-                let class = registry.instance_class(instance);
+                let class = registry.class_for_instance(instance);
                 let attr_name = child.attr.unwrap();
 
                 child_str.push('+');
@@ -615,7 +617,7 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
             io_context.write_str("]")
         },
         PolarValue::Instance(i) => {
-            let clz = shell.registry.instance_class(i);
+            let clz = shell.registry.class_for_instance(i);
             io_context.write_str("{{")?;
             let mut first = true;
             for (attr_name, attr) in &clz.attributes {
