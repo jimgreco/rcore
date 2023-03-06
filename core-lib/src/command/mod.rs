@@ -6,6 +6,7 @@ mod shell;
 mod context;
 
 pub use self::commands::Command;
+pub use self::commands::CommandValidationError;
 pub use self::commands::CommandExecutionError;
 pub use self::context::CommandContext;
 pub use self::context::IoContext;

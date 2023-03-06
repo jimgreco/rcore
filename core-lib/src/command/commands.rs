@@ -60,13 +60,16 @@ impl PartialEq for CommandExecutionError {
 
 /// A command is an operation that can be executed in the Shell.
 pub trait Command {
-    /// Returns the name of the command.
-    fn name(&self) -> &'static str;
+    /// Returns the name of the keyword.
+    fn keyword(&self) -> &'static str;
+
+    /// Returns the position of the keyword.
+    fn keyword_position(&self) -> usize;
 
     /// Returns true if the implementation can execute a command with the specified tokens.
     ///
     /// A shell error is returned if the command is improperly formatted.
-    fn validate(&self, tokens: &Tokens) -> Result<bool, CommandValidationError>;
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError>;
 
     /// Executes a command with the specified context.
     ///
@@ -235,12 +238,24 @@ pub struct SourceCommand {}
 pub struct UnsetCommand {}
 
 impl Command for AssignCommand {
-    fn name(&self) -> &'static str {
-        "assign"
+    fn keyword(&self) -> &'static str {
+        "="
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        validate_assigment(command, "=")
+    fn keyword_position(&self) -> usize {
+        1
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
+        if tokens.len() == 3 {
+            if validate_variable(tokens.get(0)) {
+                Ok(())
+            } else {
+                Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
+            }
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "<var> = <value>" })
+        }
     }
 
     fn execute(&self,
@@ -258,21 +273,22 @@ impl Command for AssignCommand {
 }
 
 impl Command for CdCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "cd"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        if command.get(0) == "cd" {
-            return if command.len() == 2 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "cd <dir>"
-                })
-            }
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() == 2 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat {
+                format: "cd <dir>"
+            })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -297,21 +313,22 @@ impl Command for CdCommand {
 }
 
 impl Command for CreateCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "create"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        if command.get(0) == "create" {
-            return if command.len() >= 3 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "create <dir> <struct> [args ...]",
-                })
-            }
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() >= 3 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat {
+                format: "create <dir> <struct> [args ...]",
+            })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -338,22 +355,34 @@ impl Command for CreateCommand {
 }
 
 impl Command for DefaultAssignCommand {
-    fn name(&self) -> &'static str {
-        "default_assign"
+    fn keyword(&self) -> &'static str {
+        ":="
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        validate_assigment(command, ":=")
+    fn keyword_position(&self) -> usize {
+        1
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
+        if tokens.len() == 3 {
+            if validate_variable(tokens.get(0)) {
+                Ok(())
+            } else {
+                Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
+            }
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "<var> := <value>" })
+        }
     }
 
     fn execute(&self,
-               command: &Tokens,
+               tokens: &Tokens,
                user_context: &mut UserContext,
                _io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        let var = &command.get(0);
-        let value = &command.get(2);
+        let var = &tokens.get(0);
+        let value = &tokens.get(2);
         if log::log_enabled!(Level::Debug) {
             let replaced_value = user_context.get_value(var);
             if replaced_value.is_none() {
@@ -370,12 +399,16 @@ impl Command for DefaultAssignCommand {
 }
 
 impl Command for EchoCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "echo"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        Ok(command.get(0) == "echo")
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, _tokens: &Tokens) -> Result<(), CommandValidationError> {
+        Ok(())
     }
 
     fn execute(&self,
@@ -408,12 +441,16 @@ impl EchoCommand {
 }
 
 impl Command for ExecuteCommand {
-    fn name(&self) -> &'static str {
-        "execute"
+    fn keyword(&self) -> &'static str {
+        "<none>"
     }
 
-    fn validate(&self, _command: &Tokens) -> Result<bool, CommandValidationError> {
-        Ok(true)
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, _command: &Tokens) -> Result<(), CommandValidationError> {
+        Ok(())
     }
 
     fn execute(&self,
@@ -448,21 +485,20 @@ impl Command for ExecuteCommand {
 }
 
 impl Command for LsCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "ls"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        if command.get(0) == "ls" {
-            return if command.len() == 1 || command.len() == 2 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "ls [dir]"
-                })
-            }
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() == 1 || command.len() == 2 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "ls [dir]" })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -598,21 +634,20 @@ fn write_object(io_context: &mut IoContext, shell: &Shell, result: &PolarValue)
 }
 
 impl Command for MkDirCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "mkdir"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        if command.get(0) == "mkdir" {
-            return if command.len() == 2 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "mkdir <dir>"
-                })
-            };
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() == 2 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "mkdir <dir>" })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -633,21 +668,20 @@ impl Command for MkDirCommand {
 }
 
 impl Command for PwdCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "pwd"
     }
 
-    fn validate(&self, tokens: &Tokens) -> Result<bool, CommandValidationError> {
-        if tokens.get(0) == "pwd" {
-            return if tokens.len() == 1 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "pwd",
-                })
-            }
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
+        if tokens.len() == 1 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "pwd" })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -667,22 +701,20 @@ impl Command for PwdCommand {
 const MAX_SOURCE_RECURSION: usize = 10;
 
 impl Command for SourceCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "source"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        let len = command.len();
-        if command.get(0) == "source" {
-            return if len == 2 && command.get(1) != "-s" || len >= 3 {
-                Ok(true)
-            } else {
-                Err(CommandValidationError::InvalidCommandFormat {
-                    format: "source [-s] <file>"
-                })
-            };
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() == 2 && command.get(1) != "-s" || command.len() >= 3 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: "source [-s] <file>" })
         }
-        Ok(false)
     }
 
     fn execute(&self,
@@ -754,27 +786,27 @@ impl Command for SourceCommand {
 }
 
 impl Command for UnsetCommand {
-    fn name(&self) -> &'static str {
+    fn keyword(&self) -> &'static str {
         "unset"
     }
 
-    fn validate(&self, command: &Tokens) -> Result<bool, CommandValidationError> {
-        if command.get(0) == "unset" {
-            let len = command.len();
-            if len == 1 {
-                return Err(CommandValidationError::InvalidCommandFormat {
-                    format: "unset [var ...]",
-                });
-            }
-            for i in 1..len {
-                if !validate_variable(&command.get(i)) {
-                    return Err(CommandValidationError::InvalidVariableName(
-                        command.get(i).to_owned()));
-                }
-            }
-            return Ok(true);
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
+        if command.len() == 1 {
+            return Err(CommandValidationError::InvalidCommandFormat {
+                format: "unset [var ...]",
+            });
         }
-        Ok(false)
+        for i in 1..command.len() {
+            if !validate_variable(&command.get(i)) {
+                return Err(CommandValidationError::InvalidVariableName(
+                    command.get(i).to_owned()));
+            }
+        }
+        Ok(())
     }
 
     fn execute(&self,
@@ -807,20 +839,6 @@ fn validate_variable(variable: &str) -> bool {
     return true;
 }
 
-fn validate_assigment(tokens: &Tokens, sign: &'static str)
-                      -> Result<bool, CommandValidationError> {
-
-    if tokens.len() == 3 && tokens.get(1) == sign {
-        if validate_variable(tokens.get(0)) {
-            Ok(true)
-        } else {
-            Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
-        }
-    } else {
-        Ok(false)
-    }
-}
-
 #[cfg(test)]
 mod assign_tests {
     use std::io;
@@ -836,17 +854,7 @@ mod assign_tests {
         let result = command.validate(&Tokens::new(
             vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()])).unwrap();
 
-        assert!(result);
-    }
-
-    #[test]
-    fn validate_invalid_assignment_command_returns_false() {
-        let command = AssignCommand {};
-
-        let result = command.validate(&Tokens::new(
-            vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()])).unwrap();
-
-        assert!(!result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -892,17 +900,7 @@ mod default_assign_tests {
         let result = command.validate(&Tokens::new(
             vec!["foo".to_owned(), ":=".to_owned(), "bar".to_owned()])).unwrap();
 
-        assert!(result);
-    }
-
-    #[test]
-    fn validate_invalid_assignment_command_returns_false() {
-        let command = DefaultAssignCommand {};
-
-        let result = command.validate(&Tokens::new(
-            vec!["foo".to_owned(), "=".to_owned(), "bar".to_owned()])).unwrap();
-
-        assert!(!result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -966,7 +964,7 @@ mod unset_tests {
 
         let result = command.validate(&Tokens::new(vec!["unset".to_owned(), "foo".to_owned()])).unwrap();
 
-        assert!(result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -976,17 +974,7 @@ mod unset_tests {
         let result = command.validate(&Tokens::new(
             vec!["unset".to_owned(), "foo".to_owned(), "bar".to_owned()])).unwrap();
 
-        assert!(result);
-    }
-
-    #[test]
-    fn different_command_returns_false() {
-        let command = UnsetCommand {};
-
-        let result = command.validate(&Tokens::new(
-            vec!["foo".to_owned(), "=".to_owned(), "unset".to_owned()])).unwrap();
-
-        assert!(!result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -1048,7 +1036,7 @@ mod mkdir_tests {
 
         let result = command.validate(&Tokens::new(vec!["mkdir".to_owned(), "foo".to_owned()])).unwrap();
 
-        assert!(result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -1125,7 +1113,7 @@ mod cd_tests {
 
         let result = command.validate(&tokens).unwrap();
 
-        assert!(result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -1164,7 +1152,7 @@ mod echo_tests {
         let result = command.validate(&Tokens::new(
             vec!["echo".to_owned(), "foo".to_owned(), "bar".to_owned()])).unwrap();
 
-        assert!(result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -1173,17 +1161,7 @@ mod echo_tests {
 
         let result = command.validate(&Tokens::new(vec!["echo".to_owned()])).unwrap();
 
-        assert!(result);
-    }
-
-    #[test]
-    fn non_echo_command_returns_false() {
-        let command = EchoCommand {};
-
-        let result = command.validate(
-            &Tokens::new(vec!["mkdir".to_owned(), "foo".to_owned()])).unwrap();
-
-        assert!(!result);
+        assert_eq!((), result);
     }
 
     #[test]
@@ -1243,7 +1221,7 @@ mod create_tests {
                 "42".to_owned()
             ])).unwrap();
 
-        assert!(result);
+        assert_eq!((), result);
     }
 
     #[test]

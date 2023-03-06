@@ -149,18 +149,25 @@ impl Shell {
                         let mut executed = false;
 
                         for command in &command_context.builtin_commands {
-                            match command.validate(&tokens) {
-                                Ok(valid) => if valid {
-                                    command.execute(
-                                        &tokens, user_context, io_context, command_context, self)?;
-                                    executed = true;
-                                    break;
-                                },
-                                Err(e) => return Err(ShellError::CommandValidationError {
-                                    src: io_context.to_source_info(),
-                                    tokens: tokens.clone(),
-                                    error: e,
-                                })
+                            if tokens.len() > command.keyword_position()
+                                && tokens.get(command.keyword_position()) == command.keyword() {
+                                match command.validate(&tokens) {
+                                    Ok(_) => {
+                                        command.execute(
+                                            &tokens,
+                                            user_context,
+                                            io_context,
+                                            command_context,
+                                            self)?;
+                                        executed = true;
+                                        break;
+                                    },
+                                    Err(e) => return Err(ShellError::CommandValidationError {
+                                        src: io_context.to_source_info(),
+                                        tokens: tokens.clone(),
+                                        error: e,
+                                    })
+                                }
                             }
                         }
 
