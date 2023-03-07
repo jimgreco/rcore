@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io::{Read, Write};
 use std::io;
-use crate::command::commands::{AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand, ExecuteCommand, LsCommand, MkDirCommand, PwdCommand, SourceCommand, UnsetCommand};
+use crate::command::commands::{AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand, ExecuteCommand, HelpCommand, LsCommand, MkDirCommand, PwdCommand, SourceCommand, UnsetCommand};
 
 /// The user context contains user-specific information related to executing commands in the
 /// shell including the current working directory and variables.
@@ -10,9 +10,9 @@ use crate::command::commands::{AssignCommand, CdCommand, Command, CreateCommand,
 /// The initial working directory for the user context is the root directory.
 #[derive(Clone)]
 pub struct UserContext {
-    pub(crate) pwd: String,
+    pwd: String,
     pub(crate) variables: HashMap<String, String>,
-    pub(crate) arguments: Vec<String>,
+    arguments: Vec<String>,
     pub(crate) level: usize
 }
 
@@ -166,6 +166,7 @@ impl<'a> IoContext<'a> {
 /// - := [DefaultAssignCommand]
 /// - echo [EchoCommand]
 /// - ls [LsCommand]
+/// - help [HelpCommand]
 /// - mkdir [MkDirCommand]
 /// - pwd [PwdCommand]
 /// - source [SourceCommand]
@@ -186,6 +187,7 @@ impl Default for CommandContext {
                                    Box::new(CreateCommand {}),
                                    Box::new(DefaultAssignCommand {}),
                                    Box::new(EchoCommand {}),
+                                   Box::new(HelpCommand {}),
                                    Box::new(LsCommand {}),
                                    Box::new(MkDirCommand {}),
                                    Box::new(PwdCommand {}),
