@@ -22,10 +22,8 @@ pub struct PathSegment {
     abs_path: String,
     instance: Option<Instance>,
     owner: Option<usize>,
-    /// The name of the attribute associated with this node.
-    pub attr: Option<&'static str>,
-    /// The name of the method associated with this node.
-    pub method: Option<&'static str>,
+    pub(crate) attr: Option<&'static str>,
+    pub(crate) method: Option<&'static str>,
 }
 
 impl PathSegment {
@@ -125,8 +123,31 @@ impl Default for Registry {
 }
 
 impl Registry {
-    /// Caches a [Class] which describes a struct, a function to create instances ("constructor"),
-    /// getters for the instance's attributes, and its instance functions ("instance methods").
+    /// Caches a [Class], which describes a struct, a function to create instances of the struct
+    /// (a "constructor"), getters for the instance's attributes, and instance functions
+    /// ("instance methods").
+    ///
+    /// Instances of cached classes can then be created using one the [Registry::create_instance]
+    /// or [Registry::parsed_create_instance] method by referencing the class name and any arguments
+    /// required by the constructor.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"]).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
+    /// ```
     pub fn cache_class(&mut self, class: Class) -> Result<(), RegistryError> {
         let class_name = class.fq_name.to_owned();
 
@@ -267,6 +288,7 @@ impl Registry {
     //
 
     /// Creates a new directory at the specified path components.
+    ///
     /// As with most [Registry] methods, the directory to create is specified with two path
     /// components, the current working directory (pwd) which is an absolute path and the directory
     /// to change to (cd) which can be an absolute or relative path.
@@ -398,18 +420,19 @@ impl Registry {
     //
 
     /// Navigates the directory tree with the specified path components and returns the directory.
+    ///
     /// As with most [Registry] methods, the directory to create is specified with two path
     /// components, the current working directory (pwd) which is an absolute path and the directory
     /// to change to (cd) which can be an absolute or relative path.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// let mut registry = rcore::command::Registry::default();
     ///
     /// registry.mkdir("/foo/bar", "../soo").unwrap();
     ///
-    /// assert_eq!("/foo/soo", registry.path("/foo/soo").unwrap().abs_path());
+    /// assert_eq!("/foo/soo", registry.cd("/foo", "soo").unwrap().abs_path());
     /// ```
     pub fn cd(&self, pwd: &str, cd: &str) -> Result<&PathSegment, RegistryError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
@@ -430,6 +453,16 @@ impl Registry {
     }
 
     /// Navigates the directory tree with the specified absolute path and returns the directory.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut registry = rcore::command::Registry::default();
+    ///
+    /// registry.mkdir("/foo/bar", "../soo").unwrap();
+    ///
+    /// assert_eq!("/foo/soo", registry.path("/foo/soo").unwrap().abs_path());
+    /// ```
     pub fn path(&self, pwd: &str) -> Result<&PathSegment, RegistryError> {
         self.cd(pwd, ".")
     }
@@ -521,8 +554,7 @@ impl Registry {
     // Class components
     //
 
-    /// Returns the [Class] for the specified [Instance].
-    pub fn class_for_instance(&self, instance: &Instance) -> &Class {
+    pub(crate) fn class_for_instance(&self, instance: &Instance) -> &Class {
         instance.class(&self.host).unwrap()
     }
 
@@ -544,7 +576,24 @@ impl Registry {
 
     /// Creates the an instance of the specified class with the specified method parameters at the
     /// specified directory.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"]).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
+    /// ```
     pub fn create_instance(&mut self,
                            pwd: &str,
                            cd: &str,
@@ -560,7 +609,25 @@ impl Registry {
     ///
     /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
     /// definition.
-    /// TODO: Example
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"]).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.parsed_create_instance("/foo", ".", "Foo", &vec!["42"]).unwrap();
+    ///
+    /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
+    /// ```
     pub fn parsed_create_instance(&mut self,
                                   pwd: &str,
                                   cd: &str,
@@ -592,7 +659,24 @@ impl Registry {
 
     /// Returns the value of the instance stored at the specified path and casts it to the
     /// specified type.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"]).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
+    /// ```
     pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str)
                                       -> Result<&T, RegistryError> {
         let instance = self.instance(pwd, cd)?;
@@ -608,9 +692,7 @@ impl Registry {
         }
     }
 
-    /// Returns the value of the instance stored at the specified path.
-    /// TODO: Example
-    pub fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, RegistryError> {
+    pub(crate) fn instance(&self, pwd: &str, cd: &str) -> Result<&Instance, RegistryError> {
         return match &self.cd(pwd, cd)?.instance {
             None => Err(RegistryError::MissingAtPath {
                 path: pwd.to_owned(),
@@ -620,17 +702,35 @@ impl Registry {
         };
     }
 
+    //
     // Get Attributes
+    //
 
-    /// Returns the value of the attribute stored at the specified path.
-    /// TODO: Example
-    pub fn instance_attr(&self, instance: &Instance, attr: &AttributeGetter) -> PolarValue {
+    pub(crate) fn instance_attr(&self, instance: &Instance, attr: &AttributeGetter) -> PolarValue {
         attr.invoke(instance, &self.host).unwrap()
     }
 
     /// Returns the value of the attribute stored at the specified path and casts it to the
     /// specified type.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_attribute_getter("id", |foo: &Foo| { foo.id }).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.attr_value::<i32>("/foo", "id").unwrap(), 42)
+    /// ```
     pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
                                               -> Result<T, RegistryError> {
         let result = self.attr(pwd, cd)?;
@@ -638,7 +738,28 @@ impl Registry {
     }
 
     /// Returns the value of the attribute stored at the specified path.
-    /// TODO: Example
+    ///
+    /// Returns the value of the attribute stored at the specified path and casts it to the
+    /// specified type.
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue, ToPolar};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_attribute_getter("id", |foo: &Foo| { foo.id }).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.attr("/foo", "id").unwrap(), 42.to_polar())
+    /// ```
     pub fn attr(&self, pwd: &str, cd: &str) -> Result<PolarValue, RegistryError> {
         let attr_path = self.cd(pwd, cd)?;
         // check that we are an attribute node
@@ -677,7 +798,29 @@ impl Registry {
     ///
     /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
     /// definition.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo {
+    ///     fn new(id: i32) -> Foo { Foo { id } }
+    ///     fn add_to_id(&self, val: i32) -> i32 { self.id + val }
+    /// }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.parsed_invoke_method_value::<i32>("/foo", "add", &vec!["15"]).unwrap(),
+    ///            42 + 15)
+    /// ```
     pub fn parsed_invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                               pwd: &str,
                                                               cd: &str,
@@ -692,7 +835,29 @@ impl Registry {
     ///
     /// Each of the arguments are parsed from strings into the parameter type defined on the [Class]
     /// definition.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue, ToPolar};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo {
+    ///     fn new(id: i32) -> Foo { Foo { id } }
+    ///     fn add_to_id(&self, val: i32) -> i32 { self.id + val }
+    /// }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.parsed_invoke_method("/foo", "add", &vec!["15"]).unwrap(),
+    ///            (42 + 15).to_polar())
+    /// ```
     pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: &Vec<&str>)
                                 -> Result<PolarValue, RegistryError> {
         // check that we are an method node
@@ -720,7 +885,29 @@ impl Registry {
 
     /// Invokes the instance method stored at the specified path and casts the return value of the
     /// instance method to the specified type.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue, ToPolar};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo {
+    ///     fn new(id: i32) -> Foo { Foo { id } }
+    ///     fn add_to_id(&self, val: i32) -> i32 { self.id + val }
+    /// }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.invoke_method_value::<i32>("/foo", "add", vec![15.to_polar()]).unwrap(),
+    ///            42 + 15)
+    /// ```
     pub fn invoke_method_value<T: 'static + FromPolar>(&mut self,
                                                        pwd: &str,
                                                        cd: &str,
@@ -732,7 +919,29 @@ impl Registry {
 
     /// Invokes the instance method stored at the specified path and returns the return value of the
     /// instance method.
-    /// TODO: Example
+    ///
+    /// # Example
+    /// ```
+    /// use rcore::command::Registry;
+    /// use rcore::command::oso::{Class, ClassBuilder, PolarValue, ToPolar};
+    ///
+    /// #[derive(PartialEq, Debug)]
+    /// struct Foo { id: i32 }
+    /// impl Foo {
+    ///     fn new(id: i32) -> Foo { Foo { id } }
+    ///     fn add_to_id(&self, val: i32) -> i32 { self.id + val }
+    /// }
+    ///
+    /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
+    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    /// let mut registry = Registry::default();
+    /// registry.cache_class(class).unwrap();
+    ///
+    /// registry.create_instance("/foo", ".", "Foo", vec![PolarValue::Integer(42)]).unwrap();
+    ///
+    /// assert_eq!(registry.invoke_method("/foo", "add", vec![15.to_polar()]).unwrap(),
+    ///            (42 + 15).to_polar())
+    /// ```
     pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
                          -> Result<PolarValue, RegistryError> {
         // check that we are an method node

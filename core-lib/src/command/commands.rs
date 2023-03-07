@@ -60,11 +60,14 @@ impl PartialEq for CommandExecutionError {
 
 /// A command is an operation that can be executed in the Shell.
 pub trait Command {
-    /// Returns the keyword to identify this command (e.g., "create").
+    /// Returns the keyword to identify this command (e.g., "cd").
     fn keyword(&self) -> &'static str;
 
-    /// Returns the position of the keyword.
+    /// Returns the position of the keyword in a command statement.
     fn keyword_position(&self) -> usize;
+
+    /// Returns text to be displayed if the help command is invoked for this command's keyword.
+    fn help_text(&self) -> &'static str;
 
     /// Returns true if the implementation can execute a command with the specified tokens.
     ///
@@ -160,6 +163,33 @@ pub struct ExecuteCommand {}
 /// ```
 pub struct LsCommand {}
 
+/// Prints out all commands or information on how a command is formatted.
+///
+/// # Examples
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string(
+///     "help").unwrap();
+///
+/// assert_eq!("=
+/// cd
+/// create
+/// :=
+/// echo
+/// help
+/// ls
+/// mkdir
+/// pwd
+/// source
+/// unset
+/// ", result);
+/// ```
+/// ```
+/// let (result, _) = rcore::command::Shell::from_string("help ls").unwrap();
+///
+/// assert_eq!("ls [dir]", result);
+/// ```
+pub struct HelpCommand {}
+
 /// Creates a new directory.
 ///
 /// This will create directories recursively if they do not exist.
@@ -248,6 +278,10 @@ impl Command for AssignCommand {
         1
     }
 
+    fn help_text(&self) -> &'static str {
+        "<var> = <value>"
+    }
+
     fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
         if tokens.len() == 3 {
             if validate_variable(tokens.get(0)) {
@@ -256,7 +290,7 @@ impl Command for AssignCommand {
                 Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
             }
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "<var> = <value>" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -283,13 +317,15 @@ impl Command for CdCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "cd <dir>"
+    }
+
     fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
         if command.len() == 2 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat {
-                format: "cd <dir>"
-            })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -299,7 +335,7 @@ impl Command for CdCommand {
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                shell: &mut Shell) -> Result<(), ShellError> {
-        match shell.registry.cd(&user_context.pwd, &tokens.get(1)) {
+        match shell.registry.cd(user_context.pwd(), &tokens.get(1)) {
             Ok(path) => {
                 debug!("[Cd] setting current working directory = {}", path.abs_path());
                 user_context.set_pwd(path.abs_path());
@@ -323,13 +359,15 @@ impl Command for CreateCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "create <dir> <struct> [args ...]"
+    }
+
     fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
         if command.len() >= 3 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat {
-                format: "create <dir> <struct> [args ...]",
-            })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -347,7 +385,7 @@ impl Command for CreateCommand {
         debug!("[Create] creating instance: dir={}, class={}, args=[{}]",
             &tokens.get(1), &tokens.get(2), &args.join(", "));
         shell.registry.parsed_create_instance(
-            &user_context.pwd, &tokens.get(1), &tokens.get(2), &args
+            user_context.pwd(), &tokens.get(1), &tokens.get(2), &args
         ).map_err(|e| ShellError::RegistryError {
             src: io_context.to_source_info(),
             tokens: tokens.clone(),
@@ -365,6 +403,10 @@ impl Command for DefaultAssignCommand {
         1
     }
 
+    fn help_text(&self) -> &'static str {
+        "<var> := <value>"
+    }
+
     fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
         if tokens.len() == 3 {
             if validate_variable(tokens.get(0)) {
@@ -373,7 +415,7 @@ impl Command for DefaultAssignCommand {
                 Err(CommandValidationError::InvalidVariableName(tokens.get(0).to_owned()))
             }
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "<var> := <value>" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -407,6 +449,10 @@ impl Command for EchoCommand {
 
     fn keyword_position(&self) -> usize {
         0
+    }
+
+    fn help_text(&self) -> &'static str {
+        "echo [arg ...]"
     }
 
     fn validate(&self, _tokens: &Tokens) -> Result<(), CommandValidationError> {
@@ -451,7 +497,11 @@ impl Command for ExecuteCommand {
         0
     }
 
-    fn validate(&self, _command: &Tokens) -> Result<(), CommandValidationError> {
+    fn help_text(&self) -> &'static str {
+        "<dir> [args ...]"
+    }
+
+    fn validate(&self, _tokens: &Tokens) -> Result<(), CommandValidationError> {
         Ok(())
     }
 
@@ -486,6 +536,56 @@ impl Command for ExecuteCommand {
     }
 }
 
+impl Command for HelpCommand {
+    fn keyword(&self) -> &'static str {
+        "help"
+    }
+
+    fn keyword_position(&self) -> usize {
+        0
+    }
+
+    fn help_text(&self) -> &'static str {
+        "help [command]"
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
+        if tokens.len() == 1 || tokens.len() == 2 {
+            Ok(())
+        } else {
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
+        }
+    }
+
+    fn execute(&self,
+               tokens: &Tokens,
+               _user_context: &mut UserContext,
+               io_context: &mut IoContext,
+               command_context: &CommandContext,
+               _shell: &mut Shell) -> Result<(), ShellError> {
+        (|| -> Result<(), io::Error> {
+            if tokens.len() == 1 {
+                for cmd in &command_context.builtin_commands {
+                    io_context.write_str(cmd.keyword())?;
+                    io_context.write_str("\n")?;
+                }
+            } else if tokens.len() == 2 {
+                let help_wanted = tokens.get(1);
+                for cmd in &command_context.builtin_commands {
+                    if cmd.keyword() == help_wanted {
+                        io_context.write_str(cmd.help_text())?;
+                    }
+                }
+            }
+            Ok(())
+        })().map_err(|e| ShellError::IoError {
+            src: io_context.to_source_info(),
+            tokens: tokens.clone(),
+            error: e,
+        })
+    }
+}
+
 impl Command for LsCommand {
     fn keyword(&self) -> &'static str {
         "ls"
@@ -495,11 +595,15 @@ impl Command for LsCommand {
         0
     }
 
-    fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
-        if command.len() == 1 || command.len() == 2 {
+    fn help_text(&self) -> &'static str {
+        "ls [dir]"
+    }
+
+    fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
+        if tokens.len() == 1 || tokens.len() == 2 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "ls [dir]" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -514,7 +618,7 @@ impl Command for LsCommand {
 
         let cd = if tokens.len() == 1 { "." } else { &tokens.get(1) };
 
-        let path = registry.cd(&user_context.pwd, cd)
+        let path = registry.cd(user_context.pwd(), cd)
             .map_err(|e| ShellError::RegistryError {
                 src: io_context.to_source_info(),
                 tokens: tokens.clone(),
@@ -644,11 +748,15 @@ impl Command for MkDirCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "mkdir <dir>"
+    }
+
     fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
         if command.len() == 2 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "mkdir <dir>" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -678,11 +786,15 @@ impl Command for PwdCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "pwd"
+    }
+
     fn validate(&self, tokens: &Tokens) -> Result<(), CommandValidationError> {
         if tokens.len() == 1 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "pwd" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -692,7 +804,7 @@ impl Command for PwdCommand {
                io_context: &mut IoContext,
                _command_context: &CommandContext,
                _shell: &mut Shell) -> Result<(), ShellError> {
-        io_context.write_str(&user_context.pwd).map_err(|e| ShellError::IoError {
+        io_context.write_str(user_context.pwd()).map_err(|e| ShellError::IoError {
             src: io_context.to_source_info(),
             tokens: tokens.clone(),
             error: e,
@@ -711,11 +823,15 @@ impl Command for SourceCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "source [-s] <file>"
+    }
+
     fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
         if command.len() == 2 && command.get(1) != "-s" || command.len() >= 3 {
             Ok(())
         } else {
-            Err(CommandValidationError::InvalidCommandFormat { format: "source [-s] <file>" })
+            Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() })
         }
     }
 
@@ -776,7 +892,7 @@ impl Command for SourceCommand {
 
         // update variables if we're not a subshell
         if !subshell {
-            user_context.set_pwd(&new_user_context.pwd);
+            user_context.set_pwd(new_user_context.pwd());
             user_context.clear_variables();
             for (key, value) in &new_user_context.variables {
                 user_context.set_value(key, value);
@@ -796,11 +912,13 @@ impl Command for UnsetCommand {
         0
     }
 
+    fn help_text(&self) -> &'static str {
+        "unset [var ...]"
+    }
+
     fn validate(&self, command: &Tokens) -> Result<(), CommandValidationError> {
         if command.len() == 1 {
-            return Err(CommandValidationError::InvalidCommandFormat {
-                format: "unset [var ...]",
-            });
+            return Err(CommandValidationError::InvalidCommandFormat { format: self.help_text() });
         }
         for i in 1..command.len() {
             if !validate_variable(&command.get(i)) {
@@ -1134,7 +1252,7 @@ mod cd_tests {
             &Tokens::new(vec!["cd".to_owned(), "foo/bar".to_owned()]),
             &mut context, &mut io_context, &command_context, &mut shell).unwrap();
 
-        assert_eq!("/foo/bar", context.pwd);
+        assert_eq!("/foo/bar", context.pwd());
     }
 }
 
