@@ -158,7 +158,7 @@ pub enum InvalidCallError {
     AttributeNotFound {
         attribute_name: String,
         type_name: String,
-    }
+    },
 }
 
 pub type Result<T> = std::result::Result<T, OsoError>;

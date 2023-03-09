@@ -1,14 +1,19 @@
 //! Wrapper structs for the generic `Function` and `Method` traits
-use std::sync::Arc;
-use super::{PolarIterator, ToPolar, ToPolarResult, Class, Instance, PolarValue,
-            FromPolarList, Host};
 use super::method::{Function, Method};
+use super::{
+    Class, FromPolarList, Host, Instance, PolarIterator, PolarValue, ToPolar, ToPolarResult,
+};
+use std::sync::Arc;
 
-fn join<A, B>(left: crate::command::oso::Result<A>, right: crate::command::oso::Result<B>) -> super::Result<(A, B)> {
+fn join<A, B>(
+    left: crate::command::oso::Result<A>,
+    right: crate::command::oso::Result<B>,
+) -> super::Result<(A, B)> {
     left.and_then(|l| right.map(|r| (l, r)))
 }
 
-type TypeErasedFunction<R> = Arc<dyn Fn(Vec<PolarValue>) -> crate::command::oso::Result<R> + Send + Sync>;
+type TypeErasedFunction<R> =
+    Arc<dyn Fn(Vec<PolarValue>) -> crate::command::oso::Result<R> + Send + Sync>;
 type TypeErasedMethod<R> =
     Arc<dyn Fn(&Instance, Vec<PolarValue>, &Host) -> super::Result<R> + Send + Sync>;
 
@@ -22,10 +27,12 @@ impl Constructor {
         F: Function<Args>,
         F::Result: Send + Sync + 'static,
     {
-        Constructor(Arc::new(move |args: Vec<PolarValue>| {
-            Args::from_polar_list(&args).map(|args| Instance::new(f.invoke(args)))
-        }),
-        param_types)
+        Constructor(
+            Arc::new(move |args: Vec<PolarValue>| {
+                Args::from_polar_list(&args).map(|args| Instance::new(f.invoke(args)))
+            }),
+            param_types,
+        )
     }
 
     pub fn invoke(&self, args: Vec<PolarValue>) -> crate::command::oso::Result<Instance> {
@@ -58,16 +65,23 @@ impl AttributeGetter {
         }))
     }
 
-    pub fn invoke(&self, receiver: &Instance, host: &Host) -> crate::command::oso::Result<PolarValue> {
+    pub fn invoke(
+        &self,
+        receiver: &Instance,
+        host: &Host,
+    ) -> crate::command::oso::Result<PolarValue> {
         self.0(receiver, host)
     }
 }
 
 #[derive(Clone)]
-pub struct InstanceMethod(TypeErasedMethod<PolarValue>, Vec<&'static str>, Option<&'static str>);
+pub struct InstanceMethod(
+    TypeErasedMethod<PolarValue>,
+    Vec<&'static str>
+);
 
 impl InstanceMethod {
-    pub fn new<T, F, Args>(f: F, param_types: Vec<&'static str>, path: Option<&'static str>) -> Self
+    pub fn new<T, F, Args>(f: F, param_types: Vec<&'static str>) -> Self
     where
         Args: FromPolarList,
         F: Method<T, Args>,
@@ -87,8 +101,7 @@ impl InstanceMethod {
                         .and_then(|(receiver, args)| f.invoke(receiver, args).to_polar_result())
                 },
             ),
-            param_types,
-            path
+            param_types
         )
     }
 
@@ -118,8 +131,7 @@ impl InstanceMethod {
                         .map(|results| results.to_polar())
                 },
             ),
-            vec![],
-            None
+            vec![]
         )
     }
 
@@ -133,7 +145,7 @@ impl InstanceMethod {
     }
 
     pub fn from_class_method(name: String) -> Self {
-        Self (
+        Self(
             Arc::new(
                 move |receiver: &Instance, args: Vec<PolarValue>, host: &Host| {
                     receiver
@@ -145,17 +157,12 @@ impl InstanceMethod {
                         })
                 },
             ),
-            vec![],
-            None
+            vec![]
         )
     }
 
     pub fn param_types(&self) -> &Vec<&'static str> {
         &self.1
-    }
-
-    pub fn path(&self) -> &Option<&'static str> {
-        &self.2
     }
 }
 

@@ -1,17 +1,15 @@
-use std::io;
-use log::{Level, debug};
-use crate::command::context::{UserContext, IoContext, CommandContext};
+use crate::command::context::{CommandContext, IoContext, UserContext};
 use crate::command::lexer::{lex_command, LexerError, Tokens};
+use log::{debug, Level};
+use std::io;
 
-use thiserror::Error;
-use crate::command::{CommandExecutionError, Registry, RegistryError, SourceInfo};
 use crate::command::commands::CommandValidationError;
 use crate::command::oso::Class;
+use crate::command::{CommandExecutionError, Registry, RegistryError, SourceInfo};
+use thiserror::Error;
 
 /// The command shell is used to dynamically instantiate instances of structs, invoke methods on
 /// instances, and get the attribute values from instances at startup or run-time.
-/// Similar to the Unix shell, instances, methods, and attributes are stored in a directory
-/// structure that can be accessed or invoked through text-based commands.
 ///
 /// # Variables
 /// The shell supports variables for use in commands.
@@ -37,7 +35,10 @@ use crate::command::oso::Class;
 /// assert_eq!("abc klm nop   qrs", &result);
 /// ```
 ///
-/// # Built-in Commands
+/// # Directory Structure
+/// Similar to the Unix shell, instances, methods, and attributes are stored in a directory
+/// structure that can be accessed or invoked through text-based commands.
+///
 /// The following commands are built into the shell to facilitate the creation and navigation of the
 /// directory structure, echoing back arguments, and loading command files.
 ///
@@ -92,8 +93,51 @@ use crate::command::oso::Class;
 /// or retrieve the value of attributes from those instances.
 ///
 /// - `create <dir> <struct_name> [arg ...]`: instantiates an instance of a struct
-/// - `</path/to/method_or_attribute> [arg ...]`: invokes a method or retrieves the value of an
-///    attribute
+/// - `</path/to/method_or_attribute> [arg ...]`: invokes a method and returns the result or
+///   retrieves the value of an attribute
+///
+/// ```
+/// use oso_derive::*;
+/// use rcore::command::Shell;
+/// use rcore::command::oso::PolarClass;
+///
+/// #[derive(PolarClass, Debug)]
+/// struct Foo { #[polar(attribute)] id: i32 }
+/// impl Foo { fn new(id: i32) -> Foo { Foo { id } } }
+///
+/// let mut shell = Shell::default();
+/// shell.cache_class(Foo::get_polar_class_builder()
+///     .set_constructor(Foo::new, vec!["int"]).build()).unwrap();
+///
+/// let (result, _) = shell.run_string(
+///     "create /foo/bar Foo 42
+///     /foo/bar/id").unwrap();
+///
+/// assert_eq!("42", result)
+/// ```
+/// ```
+/// use oso_derive::*;
+/// use rcore::command::Shell;
+/// use rcore::command::oso::PolarClass;
+///
+/// #[derive(PolarClass, Debug)]
+/// struct Foo { value: i32 }
+/// impl Foo {
+///     fn new() -> Foo { Foo { value: 0 } }
+///     fn add_to(&self, v: i32) -> i32 { v } }
+///
+/// let mut shell = Shell::default();
+/// shell.cache_class(Foo::get_polar_class_builder()
+///     .set_constructor(Foo::new, vec![])
+///     .add_method("add", Foo::add_to, vec!["int"]).build()).unwrap();
+///
+/// let (result, _) = shell.run_string(
+///     "create /foo/bar Foo
+///     /foo/bar/add 14
+///     /foo/bar/add 28").unwrap();
+///
+/// assert_eq!("1428", result)
+/// ```
 ///
 /// The user can configure the [CommandContext] with user-defined commands.
 #[derive(Default)]
@@ -133,64 +177,104 @@ impl Shell {
     ///
     /// assert_eq!("Mr. Burns 42", &String::from_utf8(output_vec).unwrap());
     /// ```
-    pub fn execute_commands(&mut self,
-                            user_context: &mut UserContext,
-                            io_context: &mut IoContext,
-                            command_context: &CommandContext) -> Result<(), ShellError> {
+    pub fn execute_commands(
+        &mut self,
+        user_context: &mut UserContext,
+        io_context: &mut IoContext,
+        command_context: &CommandContext,
+    ) -> Result<(), ShellError> {
         loop {
             let line = io_context.line;
             match lex_command(user_context, io_context) {
                 Some(result) => match result {
                     Ok(tokens) => {
                         if log::log_enabled!(Level::Debug) {
-                            debug!("{}:{}: {}",io_context.src,line,tokens.tokens_string());
+                            debug!("{}:{}: {}", io_context.src, line, tokens.tokens_string());
                         }
 
                         let mut executed = false;
 
                         for command in &command_context.builtin_commands {
                             if tokens.len() > command.keyword_position()
-                                && tokens.get(command.keyword_position()) == command.keyword() {
-                                match command.validate(&tokens) {
+                                && tokens.get(command.keyword_position()) == command.keyword()
+                            {
+                                match command.validate(&tokens, user_context, self) {
                                     Ok(_) => {
                                         command.execute(
                                             &tokens,
                                             user_context,
                                             io_context,
                                             command_context,
-                                            self)?;
+                                            self,
+                                        )?;
                                         executed = true;
                                         break;
-                                    },
-                                    Err(e) => return Err(ShellError::CommandValidationError {
-                                        src: io_context.to_source_info(),
-                                        tokens: tokens.clone(),
-                                        error: e,
-                                    })
+                                    }
+                                    Err(e) => {
+                                        return Err(ShellError::CommandValidationError {
+                                            src: io_context.to_source_info(),
+                                            tokens: tokens.clone(),
+                                            error: e,
+                                        })
+                                    }
                                 }
                             }
                         }
 
                         if !executed {
                             command_context.execute_command.execute(
-                                &tokens, user_context, io_context, command_context, self)?;
+                                &tokens,
+                                user_context,
+                                io_context,
+                                command_context,
+                                self,
+                            )?;
                         }
                     }
-                    Err(e) => return Err(match e {
-                        LexerError::IoError(e) => ShellError::IoError {
-                            src: io_context.to_source_info(),
-                            tokens: Tokens::new(vec![]),
-                            error: e,
-                        },
-                        e => ShellError::LexerError {
-                            src: io_context.to_source_info(),
-                            error: e,
-                        }
-                    })
-                }
-                None => return Ok(())
+                    Err(e) => {
+                        return Err(match e {
+                            LexerError::IoError(e) => ShellError::IoError {
+                                src: io_context.to_source_info(),
+                                tokens: Tokens::new(vec![]),
+                                error: e,
+                            },
+                            e => ShellError::LexerError {
+                                src: io_context.to_source_info(),
+                                error: e,
+                            },
+                        })
+                    }
+                },
+                None => return Ok(()),
             }
         }
+    }
+
+    /// This is a utility method to run commands from a string.
+    /// This method is primarily designed to simplify the running of commands in documentation and
+    /// tests and should not be used in production.
+    ///
+    /// # Example
+    /// ```
+    /// let mut shell = rcore::command::Shell::default();
+    /// let (result, _) = shell.run_string(
+    ///         "v1 = \"Mr. Burns\"
+    ///          v2 = 42
+    ///          echo $v1 $v2").unwrap();
+    ///
+    /// assert_eq!("Mr. Burns 42", result);
+    /// ```
+    pub fn run_string(&mut self, commands: &str) -> Result<(String, UserContext), ShellError> {
+        let command_context = CommandContext::default();
+        let mut user_context = UserContext::default();
+        let mut commands = io::Cursor::new(commands.as_bytes());
+        let mut output_vec: Vec<u8> = Vec::new();
+        let mut output = io::Cursor::new(&mut output_vec);
+        let mut io_context = IoContext::new("test", &mut commands, &mut output);
+
+        self.execute_commands(&mut user_context, &mut io_context, &command_context)?;
+
+        Ok((String::from_utf8(output_vec).unwrap(), user_context))
     }
 
     /// This is a utility method to run commands from a string.
@@ -208,16 +292,7 @@ impl Shell {
     /// ```
     pub fn from_string(commands: &str) -> Result<(String, UserContext), ShellError> {
         let mut shell = Shell::default();
-        let command_context = CommandContext::default();
-        let mut user_context = UserContext::default();
-        let mut commands = io::Cursor::new(commands.as_bytes());
-        let mut output_vec: Vec<u8> = Vec::new();
-        let mut output = io::Cursor::new(&mut output_vec);
-        let mut io_context = IoContext::new("test", &mut commands, &mut output);
-
-        shell.execute_commands(&mut user_context, &mut io_context, &command_context)?;
-
-        Ok((String::from_utf8(output_vec).unwrap(), user_context))
+        shell.run_string(commands)
     }
 }
 
@@ -225,55 +300,76 @@ impl Shell {
 #[derive(Debug, Error)]
 pub enum ShellError {
     #[error("{src}: {error}")]
-    LexerError {
-        src: SourceInfo,
-        error: LexerError
-    },
+    LexerError { src: SourceInfo, error: LexerError },
     #[error("{src}: tokens={tokens}, {error}")]
     IoError {
         src: SourceInfo,
         tokens: Tokens,
-        error: io::Error
+        error: io::Error,
     },
     #[error("{src}: tokens={tokens}, {error}")]
     RegistryError {
         src: SourceInfo,
         tokens: Tokens,
-        error: RegistryError
+        error: RegistryError,
     },
     #[error("{src}: tokens={tokens}, {error}")]
     CommandValidationError {
         src: SourceInfo,
         tokens: Tokens,
-        error: CommandValidationError
+        error: CommandValidationError,
     },
     #[error("{src}: tokens={tokens}, {error}")]
     CommandExecutionError {
         src: SourceInfo,
         tokens: Tokens,
-        error: CommandExecutionError
+        error: CommandExecutionError,
     },
 }
 
 impl PartialEq for ShellError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (ShellError::LexerError{ src, error },
-                ShellError::LexerError { src: src2, error: error2})
-            => src == src2 && error == error2,
-            (ShellError::IoError{ src, tokens, .. },
-                ShellError::IoError { src: src2, tokens: tokens2, .. })
-            => src == src2 && tokens == tokens2,
-            (ShellError::RegistryError{ src, tokens, error },
-                ShellError::RegistryError { src: src2, tokens: tokens2, error: error2 })
-            => src == src2 && tokens == tokens2 && error == error2,
-            (ShellError::CommandValidationError{ src, tokens, error },
-                 ShellError::CommandValidationError { src: src2, tokens: tokens2, error: error2 })
-            => src == src2 && tokens == tokens2 && error == error2,
-            (ShellError::CommandExecutionError{ src, tokens, error },
-                ShellError::CommandExecutionError { src: src2, tokens: tokens2, error: error2 })
-            => src == src2 && tokens == tokens2 && error == error2,
-            _ => false
+            (
+                ShellError::LexerError { src, error },
+                ShellError::LexerError {
+                    src: src2,
+                    error: error2,
+                },
+            ) => src == src2 && error == error2,
+            (
+                ShellError::IoError { src, tokens, .. },
+                ShellError::IoError {
+                    src: src2,
+                    tokens: tokens2,
+                    ..
+                },
+            ) => src == src2 && tokens == tokens2,
+            (
+                ShellError::RegistryError { src, tokens, error },
+                ShellError::RegistryError {
+                    src: src2,
+                    tokens: tokens2,
+                    error: error2,
+                },
+            ) => src == src2 && tokens == tokens2 && error == error2,
+            (
+                ShellError::CommandValidationError { src, tokens, error },
+                ShellError::CommandValidationError {
+                    src: src2,
+                    tokens: tokens2,
+                    error: error2,
+                },
+            ) => src == src2 && tokens == tokens2 && error == error2,
+            (
+                ShellError::CommandExecutionError { src, tokens, error },
+                ShellError::CommandExecutionError {
+                    src: src2,
+                    tokens: tokens2,
+                    error: error2,
+                },
+            ) => src == src2 && tokens == tokens2 && error == error2,
+            _ => false,
         }
     }
 
@@ -284,15 +380,19 @@ impl PartialEq for ShellError {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
-    use std::io::Cursor;
     use crate::command::commands::CommandValidationError;
-    use crate::command::context::{UserContext, IoContext, CommandContext};
+    use crate::command::context::{CommandContext, IoContext, UserContext};
     use crate::command::lexer::{LexerError, Tokens};
     use crate::command::shell::{Shell, ShellError};
+    use std::io;
+    use std::io::Cursor;
 
     fn setup() -> (Shell, CommandContext, UserContext) {
-        (Shell::default(), CommandContext::default(), UserContext::default())
+        (
+            Shell::default(),
+            CommandContext::default(),
+            UserContext::default(),
+        )
     }
 
     #[test]
@@ -302,7 +402,9 @@ mod tests {
         let mut sink = io::sink();
         let mut io_context = IoContext::new("test", &mut cursor, &mut sink);
 
-        let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).unwrap();
+        let result = shell
+            .execute_commands(&mut user_context, &mut io_context, &commands)
+            .unwrap();
 
         assert_eq!((), result);
         assert_eq!("bar", user_context.get_value("foo").unwrap());
@@ -315,7 +417,9 @@ mod tests {
         let mut sink = io::sink();
         let mut io_context = IoContext::new("test", &mut cursor, &mut sink);
 
-        let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).unwrap();
+        let result = shell
+            .execute_commands(&mut user_context, &mut io_context, &commands)
+            .unwrap();
 
         assert_eq!((), result);
         assert_eq!("bar", user_context.get_value("foo").unwrap());
@@ -325,34 +429,53 @@ mod tests {
     #[test]
     fn lexer_error_is_passed_through() {
         let (mut shell, commands, mut user_context) = setup();
-        let mut cursor = Cursor::new("foo = bar
+        let mut cursor = Cursor::new(
+            "foo = bar
 foo = s\"oo
-do12 = goo".as_bytes());
+do12 = goo"
+                .as_bytes(),
+        );
         let mut sink = io::sink();
         let mut io_context = IoContext::new("test", &mut cursor, &mut sink);
 
-        let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
+        let result = shell
+            .execute_commands(&mut user_context, &mut io_context, &commands)
+            .err()
+            .unwrap();
 
-        assert_eq!(ShellError::LexerError{
-            src: io_context.to_source_info(),
-            error: LexerError::UnterminatedQuote}, result);
+        assert_eq!(
+            ShellError::LexerError {
+                src: io_context.to_source_info(),
+                error: LexerError::UnterminatedQuote
+            },
+            result
+        );
     }
 
     #[test]
     fn invalid_command_throws_error() {
         let (mut shell, commands, mut user_context) = setup();
-        let mut cursor = Cursor::new("foo = bar
+        let mut cursor = Cursor::new(
+            "foo = bar
                     12foo = soo
-                    do12 = goo".as_bytes());
+                    do12 = goo"
+                .as_bytes(),
+        );
         let mut sink = io::sink();
         let mut io_context = IoContext::new("test", &mut cursor, &mut sink);
 
-        let result = shell.execute_commands(&mut user_context, &mut io_context, &commands).err().unwrap();
+        let result = shell
+            .execute_commands(&mut user_context, &mut io_context, &commands)
+            .err()
+            .unwrap();
 
-        assert_eq!(ShellError::CommandValidationError {
-            src: io_context.to_source_info(),
-            error: CommandValidationError::InvalidVariableName("12foo".to_owned()),
-            tokens: Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]),
-        }, result);
+        assert_eq!(
+            ShellError::CommandValidationError {
+                src: io_context.to_source_info(),
+                error: CommandValidationError::InvalidVariableName("12foo".to_owned()),
+                tokens: Tokens::new(vec!["12foo".to_owned(), "=".to_owned(), "soo".to_owned()]),
+            },
+            result
+        );
     }
 }

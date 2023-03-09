@@ -1,15 +1,15 @@
 //! Support for dynamic class objects in Rust
 
+use super::class_method::{AttributeGetter, ClassMethod, Constructor, InstanceMethod};
+use super::method::{Function, Method};
+use super::{
+    FromPolarList, Host, InvalidCallError, OsoError, PolarIterator, PolarValue, ToPolar,
+    ToPolarResult, TypeError,
+};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use super::{
-    FromPolarList, InvalidCallError, OsoError, ToPolar, ToPolarResult, PolarValue,
-    PolarIterator, TypeError, Host
-};
-use super::method::{Function, Method};
-use super::class_method::{AttributeGetter, ClassMethod, Constructor, InstanceMethod};
 
 type Attributes = HashMap<&'static str, AttributeGetter>;
 type ClassMethods = HashMap<&'static str, ClassMethod>;
@@ -62,7 +62,6 @@ pub struct Class {
     equality_check: EqualityMethod,
 
     into_iter: IteratorMethod,
-
     // Hooks to be called on the class once it's been registered with host.
     //pub register_hooks: RegisterHooks,
 }
@@ -244,33 +243,29 @@ where
     }
 
     /// Add a method for polar method calls like `foo.plus(i32)
-    pub(crate) fn legacy_add_method<F, Args, R>(
-        self,
-        name: &'static str,
-        f: F) -> Self
-        where
-            Args: FromPolarList,
-            F: Method<T, Args, Result = R>,
-            R: ToPolarResult + 'static,
+    pub(crate) fn legacy_add_method<F, Args, R>(self, name: &'static str, f: F) -> Self
+    where
+        Args: FromPolarList,
+        F: Method<T, Args, Result = R>,
+        R: ToPolarResult + 'static,
     {
-        self.add_method(name, f, vec![], None)
+        self.add_method(name, f, vec![])
     }
 
     /// Add a method for polar method calls like `foo.plus(i32)
     pub fn add_method<F, Args, R>(
-            mut self,
-            name: &'static str,
-            f: F,
-            param_types: Vec<&'static str>,
-            path: Option<&'static str>) -> Self
-        where
-            Args: FromPolarList,
-            F: Method<T, Args, Result = R>,
-            R: ToPolarResult + 'static,
+        mut self,
+        name: &'static str,
+        f: F,
+        param_types: Vec<&'static str>) -> Self
+    where
+        Args: FromPolarList,
+        F: Method<T, Args, Result = R>,
+        R: ToPolarResult + 'static,
     {
         self.class
             .instance_methods
-            .insert(name, InstanceMethod::new(f, param_types, path));
+            .insert(name, InstanceMethod::new(f, param_types));
         self
     }
 
@@ -339,7 +334,7 @@ impl Instance {
     pub fn new<T: Send + Sync + 'static>(instance: T) -> Self {
         Self {
             inner: Arc::new(instance),
-            debug_type_name: std::any::type_name::<T>()
+            debug_type_name: std::any::type_name::<T>(),
         }
     }
 
@@ -427,10 +422,7 @@ impl Instance {
     /// # Arguments
     ///
     /// * `host`: Pass host if possible to improve error handling.
-    pub fn downcast<T: 'static>(
-        &self,
-        host: Option<&Host>,
-    ) -> Result<&T, TypeError> {
+    pub fn downcast<T: 'static>(&self, host: Option<&Host>) -> Result<&T, TypeError> {
         let name = host
             .map(|h| self.name(h).to_owned())
             .unwrap_or_else(|| self.debug_type_name.to_owned());

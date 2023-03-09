@@ -20,21 +20,21 @@
 //! For more examples, see the [oso documentation](https://docs.osohq.com).
 //!
 
-pub mod builtins;
-mod errors;
-mod value;
-mod from_polar;
-mod to_polar;
-mod method;
+pub(crate) mod builtins;
 mod class;
 mod class_method;
+mod errors;
+mod from_polar;
+mod method;
+mod to_polar;
+mod value;
 
-pub use errors::{InvalidCallError, OsoError, Result, TypeError};
-pub use class_method::{Constructor, InstanceMethod, AttributeGetter};
 pub use class::{Class, ClassBuilder, Instance};
+pub use class_method::{AttributeGetter, Constructor, InstanceMethod};
+pub use errors::{InvalidCallError, OsoError, Result, TypeError};
 pub use from_polar::{FromPolar, FromPolarList};
-pub use to_polar::{ToPolar, ToPolarList, PolarIterator, ToPolarResult};
-pub use value::{PolarValue};
+pub use to_polar::{PolarIterator, ToPolar, ToPolarList, ToPolarResult};
+pub use value::PolarValue;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -102,29 +102,30 @@ impl Host {
             class_name_to_fq_name: HashMap::new(),
             class_names: HashMap::new(),
             classes: HashMap::new(),
-            accept_expression: false
+            accept_expression: false,
         };
         let type_class = metaclass();
-        host.cache_class(type_class).expect("could not register the metaclass");
+        host.cache_class(type_class)
+            .expect("could not register the metaclass");
         host
     }
 
     pub fn get_class(&self, name: &str) -> Result<&Class> {
         match self.classes.get(name) {
             Some(class) => Ok(class),
-            None => {
-                match self.class_name_to_fq_name.get(name) {
-                    None => return Err(OsoError::MissingClassError {
+            None => match self.class_name_to_fq_name.get(name) {
+                None => {
+                    return Err(OsoError::MissingClassError {
                         name: name.to_string(),
-                    }),
-                    Some(fq_name) => match self.classes.get(fq_name) {
-                        None => Err(OsoError::MissingClassError {
-                            name: fq_name.to_string(),
-                        }),
-                        Some(class) => Ok(class)
-                    }
+                    })
                 }
-            }
+                Some(fq_name) => match self.classes.get(fq_name) {
+                    None => Err(OsoError::MissingClassError {
+                        name: fq_name.to_string(),
+                    }),
+                    Some(class) => Ok(class),
+                },
+            },
         }
     }
 
@@ -158,13 +159,17 @@ impl Host {
             .or_insert_with(|| class.clone());
 
         if self.classes.contains_key(&class.fq_name) {
-            Err(OsoError::DuplicateClassError { name: class.fq_name.clone() })
+            Err(OsoError::DuplicateClassError {
+                name: class.fq_name.clone(),
+            })
         } else {
-            self.class_names.insert(class.type_id, class.fq_name.clone());
+            self.class_names
+                .insert(class.type_id, class.fq_name.clone());
 
             // only insert the short name if it does not exist already
             if !self.class_name_to_fq_name.contains_key(&class.name) {
-                self.class_name_to_fq_name.insert(class.name.clone(), class.fq_name.clone());
+                self.class_name_to_fq_name
+                    .insert(class.name.clone(), class.fq_name.clone());
             }
 
             self.classes.insert(class.fq_name.clone(), class);
@@ -182,7 +187,7 @@ impl Host {
             PolarValue::Integer(_) => class_tag == "int",
             PolarValue::Float(_) => class_tag == "float",
             PolarValue::String(_) => class_tag == "string",
-            _ => false
+            _ => false,
         };
         Ok(res)
     }

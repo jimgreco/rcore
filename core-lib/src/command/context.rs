@@ -1,8 +1,11 @@
+use crate::command::commands::{
+    AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand,
+    ExecuteCommand, HelpCommand, LsCommand, MkDirCommand, PwdCommand, SourceCommand, UnsetCommand,
+};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::io::{Read, Write};
 use std::io;
-use crate::command::commands::{AssignCommand, CdCommand, Command, CreateCommand, DefaultAssignCommand, EchoCommand, ExecuteCommand, HelpCommand, LsCommand, MkDirCommand, PwdCommand, SourceCommand, UnsetCommand};
+use std::io::{Read, Write};
 
 /// The user context contains user-specific information related to executing commands in the
 /// shell including the current working directory and variables.
@@ -13,7 +16,7 @@ pub struct UserContext {
     pwd: String,
     pub(crate) variables: HashMap<String, String>,
     arguments: Vec<String>,
-    pub(crate) level: usize
+    pub(crate) level: usize,
 }
 
 impl Default for UserContext {
@@ -22,7 +25,7 @@ impl Default for UserContext {
             pwd: "/".to_owned(),
             variables: HashMap::default(),
             arguments: vec![],
-            level: 0
+            level: 0,
         }
     }
 }
@@ -89,7 +92,7 @@ pub struct SourceInfo {
     /// The line associated with the error.
     line: usize,
     /// The column associated with the error.
-    col: usize
+    col: usize,
 }
 
 impl Display for SourceInfo {
@@ -176,23 +179,25 @@ impl<'a> IoContext<'a> {
 /// [ExecuteCommand]
 pub struct CommandContext {
     pub(crate) builtin_commands: Vec<Box<dyn Command>>,
-    pub(crate) execute_command: Box<dyn Command>
+    pub(crate) execute_command: Box<dyn Command>,
 }
 
 impl Default for CommandContext {
     fn default() -> Self {
         CommandContext {
-            builtin_commands: vec![Box::new(AssignCommand {}),
-                                   Box::new(CdCommand {}),
-                                   Box::new(CreateCommand {}),
-                                   Box::new(DefaultAssignCommand {}),
-                                   Box::new(EchoCommand {}),
-                                   Box::new(HelpCommand {}),
-                                   Box::new(LsCommand {}),
-                                   Box::new(MkDirCommand {}),
-                                   Box::new(PwdCommand {}),
-                                   Box::new(SourceCommand {}),
-                                   Box::new(UnsetCommand {})],
+            builtin_commands: vec![
+                Box::new(AssignCommand {}),
+                Box::new(CdCommand {}),
+                Box::new(CreateCommand {}),
+                Box::new(DefaultAssignCommand {}),
+                Box::new(EchoCommand {}),
+                Box::new(HelpCommand {}),
+                Box::new(LsCommand {}),
+                Box::new(MkDirCommand {}),
+                Box::new(PwdCommand {}),
+                Box::new(SourceCommand {}),
+                Box::new(UnsetCommand {}),
+            ],
             execute_command: Box::new(ExecuteCommand {}),
         }
     }

@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Iter;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::ptr::eq;
 use std::str::FromStr;
@@ -8,8 +8,8 @@ use rand;
 use thiserror::Error;
 
 use super::oso::{
-    builtins, Class, Instance, OsoError, PolarValue, FromPolar, Host, ToPolar, Constructor,
-    InstanceMethod, AttributeGetter
+    builtins, AttributeGetter, Class, Constructor, FromPolar, Host, Instance, InstanceMethod,
+    OsoError, PolarValue, ToPolar,
 };
 
 /// A path segment is a single node in the directory tree.
@@ -38,16 +38,16 @@ impl PathSegment {
     }
 
     /// Returns the instance associated with the path segment.
-    pub fn instance(&self) -> Option<&Instance> {
+    pub(crate) fn instance(&self) -> Option<&Instance> {
         self.instance.as_ref()
     }
 
     /// Returns the instance that owns the method or attribute associated with this path segment.
-    pub fn owner_instance<'a>(&'a self, reg: &'a Registry) -> Option<&'a Instance> {
+    pub(crate) fn owner_instance<'a>(&'a self, reg: &'a Registry) -> Option<&'a Instance> {
         match self.owner {
             None => None,
             // let this explode if we've messed up the registry tree
-            Some(o) => Some(reg.paths.get(&o).unwrap().instance.as_ref().unwrap())
+            Some(o) => Some(reg.paths.get(&o).unwrap().instance.as_ref().unwrap()),
         }
     }
 
@@ -74,7 +74,7 @@ impl PartialEq for PathSegment {
 /// An iterator for a path segment's child nodes.
 pub struct PathSegmentIterator<'a> {
     iterator: Iter<'a, String, usize>,
-    registry: &'a Registry
+    registry: &'a Registry,
 }
 
 impl<'a> Iterator for PathSegmentIterator<'a> {
@@ -83,7 +83,7 @@ impl<'a> Iterator for PathSegmentIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.iterator.next() {
             None => None,
-            Some((_, id)) => Some(self.registry.paths.get(&id).unwrap())
+            Some((_, id)) => Some(self.registry.paths.get(&id).unwrap()),
         }
     }
 }
@@ -107,17 +107,20 @@ impl Default for Registry {
             paths: HashMap::new(),
             root_id: rand::random(),
         };
-        reg.paths.insert(reg.root_id, PathSegment {
-            children: HashMap::new(),
-            id: reg.root_id,
-            instance: None,
-            name: "".to_owned(),
-            parent: None,
-            abs_path: "/".to_owned(),
-            owner: None,
-            method: None,
-            attr: None,
-        });
+        reg.paths.insert(
+            reg.root_id,
+            PathSegment {
+                children: HashMap::new(),
+                id: reg.root_id,
+                instance: None,
+                name: "".to_owned(),
+                parent: None,
+                abs_path: "/".to_owned(),
+                owner: None,
+                method: None,
+                attr: None,
+            },
+        );
         reg
     }
 }
@@ -170,7 +173,9 @@ impl Registry {
             }
         }
 
-        self.host.cache_class(class).map_err(|_| RegistryError::DuplicateClass(class_name))
+        self.host
+            .cache_class(class)
+            .map_err(|_| RegistryError::DuplicateClass(class_name))
     }
 
     //
@@ -241,45 +246,49 @@ impl Registry {
             PolarValue::Float(_) => ("float", "float"),
             PolarValue::String(_) => ("string", "string"),
             PolarValue::Map(_) => ("map", "dict"),
-            PolarValue::List(_) => ("list", "vec")
+            PolarValue::List(_) => ("list", "vec"),
         }
     }
 
-    fn parse<T: FromStr>(param: &str,
-                         class_name: &str,
-                         method_name: &str,
-                         param_index: usize,
-                         param_type: &'static str) -> Result<T, RegistryError> {
-        param.parse().map_err(|_| RegistryError::InvalidMethodParameter {
-            class: class_name.to_owned(),
-            method: method_name.to_owned(),
-            param_index,
-            param_type,
-            reason: "could not parse from string",
-        })
+    fn parse<T: FromStr>(
+        param: &str,
+        class_name: &str,
+        method_name: &str,
+        param_index: usize,
+        param_type: &'static str,
+    ) -> Result<T, RegistryError> {
+        param
+            .parse()
+            .map_err(|_| RegistryError::InvalidMethodParameter {
+                class: class_name.to_owned(),
+                method: method_name.to_owned(),
+                param_index,
+                param_type,
+                reason: "could not parse from string",
+            })
     }
 
-    fn cast<T: 'static + FromPolar>(pwd: &str,
-                                    cd: &str,
-                                    cast_type: &'static str,
-                                    result: PolarValue) -> Result<T, RegistryError> {
-        T::from_polar(result).map_err(|e| {
-            match e {
-                OsoError::TypeError(e) => RegistryError::InvalidCast {
-                    pwd: pwd.to_owned(),
-                    cd: cd.to_owned(),
-                    cast_type,
-                    expected: e.expected,
-                    got: e.got.unwrap_or("".to_owned()),
-                },
-                _ => RegistryError::InvalidCast {
-                    pwd: pwd.to_owned(),
-                    cd: cd.to_owned(),
-                    cast_type,
-                    expected: "".to_owned(),
-                    got: "".to_owned(),
-                }
-            }
+    fn cast<T: 'static + FromPolar>(
+        pwd: &str,
+        cd: &str,
+        cast_type: &'static str,
+        result: PolarValue,
+    ) -> Result<T, RegistryError> {
+        T::from_polar(result).map_err(|e| match e {
+            OsoError::TypeError(e) => RegistryError::InvalidCast {
+                pwd: pwd.to_owned(),
+                cd: cd.to_owned(),
+                cast_type,
+                expected: e.expected,
+                got: e.got.unwrap_or("".to_owned()),
+            },
+            _ => RegistryError::InvalidCast {
+                pwd: pwd.to_owned(),
+                cd: cd.to_owned(),
+                cast_type,
+                expected: "".to_owned(),
+                got: "".to_owned(),
+            },
         })
     }
 
@@ -306,14 +315,16 @@ impl Registry {
         self.create_path(pwd, cd, true, None, None, None, None)
     }
 
-    fn create_path(&mut self,
-                   pwd: &str,
-                   cd: &str,
-                   fail_on_duplicate: bool,
-                   instance: Option<Instance>,
-                   owner: Option<usize>,
-                   method: Option<&'static str>,
-                   attr: Option<&'static str>) -> Result<(), RegistryError> {
+    fn create_path(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        fail_on_duplicate: bool,
+        instance: Option<Instance>,
+        owner: Option<usize>,
+        method: Option<&'static str>,
+        attr: Option<&'static str>,
+    ) -> Result<(), RegistryError> {
         let mut pwd_node = self.paths.get(&self.root_id).unwrap();
         let mut created = false;
 
@@ -327,7 +338,7 @@ impl Registry {
                     created = true;
                     self.paths.get(&child_id).unwrap()
                 }
-                Some(child_id) => self.paths.get(child_id).unwrap()
+                Some(child_id) => self.paths.get(child_id).unwrap(),
             };
         }
 
@@ -347,28 +358,27 @@ impl Registry {
                 let full_path = path.abs_path.clone();
                 let id = path.id;
 
-                for (name, method) in instance_methods {
-                    let command_path = method.path().unwrap_or(name);
+                for (name, _) in instance_methods {
                     self.create_path(
                         &full_path,
-                        command_path,
+                        name,
                         true,
                         None,
                         Some(id),
                         Some(name),
-                        None)?;
+                        None,
+                    )?;
                 }
-                for (attr_name, _) in attributes {
-                    // TODO: customize attribute path
-                    let attr_path = attr_name;
+                for (name, _) in attributes {
                     self.create_path(
                         &full_path,
-                        attr_path,
+                        name,
                         true,
                         None,
                         Some(id),
                         None,
-                        Some(attr_name))?;
+                        Some(name),
+                    )?;
                 }
             } else {
                 let id = pwd_node.id;
@@ -380,12 +390,18 @@ impl Registry {
 
             Ok(())
         } else {
-            Err(RegistryError::DuplicatePath(Registry::to_path_str(pwd, cd).unwrap()))
+            Err(RegistryError::DuplicatePath(
+                Registry::to_path_str(pwd, cd).unwrap(),
+            ))
         }
     }
 
-    fn create_child(&mut self, node_id: usize, pwd: String, name: &str)
-                    -> Result<usize, RegistryError> {
+    fn create_child(
+        &mut self,
+        node_id: usize,
+        pwd: String,
+        name: &str,
+    ) -> Result<usize, RegistryError> {
         let parent = self.paths.get_mut(&node_id).unwrap();
         if name.is_empty() || name == "." || name == ".." {
             Err(RegistryError::InvalidPathChildName {
@@ -403,7 +419,7 @@ impl Registry {
                 parent: Some(parent.id),
                 abs_path: match parent.parent {
                     None => path_copy + name,
-                    Some(_) => path_copy + "/" + name
+                    Some(_) => path_copy + "/" + name,
                 },
                 owner: None,
                 method: None,
@@ -440,12 +456,14 @@ impl Registry {
         let segments = Registry::to_path_segments(pwd, cd)?;
         for segment in segments {
             pwd_node = match pwd_node.children.get(&segment) {
-                None => return Err(RegistryError::IllegalPathNavigation {
-                    pwd: pwd.to_owned(),
-                    cd: cd.to_owned(),
-                    reason: "unknown path",
-                }),
-                Some(child_id) => self.paths.get(child_id).unwrap()
+                None => {
+                    return Err(RegistryError::IllegalPathNavigation {
+                        pwd: pwd.to_owned(),
+                        cd: cd.to_owned(),
+                        reason: "unknown path",
+                    })
+                }
+                Some(child_id) => self.paths.get(child_id).unwrap(),
             };
         }
 
@@ -471,11 +489,13 @@ impl Registry {
     // Utility methods for dealing with constructor and method params
     //
 
-    fn parse_params(&self,
-                    class_name: &str,
-                    method_name: &str,
-                    args: &Vec<&str>,
-                    param_types: &Vec<&'static str>) -> Result<Vec<PolarValue>, RegistryError> {
+    fn parse_params(
+        &self,
+        class_name: &str,
+        method_name: &str,
+        args: &Vec<&str>,
+        param_types: &Vec<&'static str>,
+    ) -> Result<Vec<PolarValue>, RegistryError> {
         if args.len() != param_types.len() {
             return Err(RegistryError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),
@@ -491,14 +511,14 @@ impl Registry {
             let pt = param_types[i];
 
             if pt == "bool" {
-                params.push(Registry::parse::<bool>(
-                    arg, class_name, method_name, i, pt)?.to_polar());
+                params
+                    .push(Registry::parse::<bool>(arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "int" {
-                params.push(Registry::parse::<i32>(
-                    arg, class_name, method_name, i, pt)?.to_polar());
+                params
+                    .push(Registry::parse::<i32>(arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "float" {
-                params.push(Registry::parse::<f64>(
-                    arg, class_name, method_name, i, pt)?.to_polar());
+                params
+                    .push(Registry::parse::<f64>(arg, class_name, method_name, i, pt)?.to_polar());
             } else if pt == "string" {
                 params.push(PolarValue::String(arg.to_owned()));
             } else {
@@ -521,11 +541,13 @@ impl Registry {
         Ok(params)
     }
 
-    fn validate_params(&self,
-                       params: &Vec<PolarValue>,
-                       class_name: &str,
-                       method_name: &str,
-                       param_types: &Vec<&'static str>) -> Result<(), RegistryError> {
+    fn validate_params(
+        &self,
+        params: &Vec<PolarValue>,
+        class_name: &str,
+        method_name: &str,
+        param_types: &Vec<&'static str>,
+    ) -> Result<(), RegistryError> {
         if params.len() != param_types.len() {
             return Err(RegistryError::InvalidNumberOfMethodParameters {
                 class: class_name.to_owned(),
@@ -558,15 +580,16 @@ impl Registry {
         instance.class(&self.host).unwrap()
     }
 
-    fn class(&self, class_name: &str) -> Result<&Class, RegistryError> {
-        self.host.get_class(class_name).map_err(
-            |_| RegistryError::UnknownClass(class_name.to_owned()))
+    pub(crate) fn class(&self, class_name: &str) -> Result<&Class, RegistryError> {
+        self.host
+            .get_class(class_name)
+            .map_err(|_| RegistryError::UnknownClass(class_name.to_owned()))
     }
 
     fn constructor(&self, class_name: &str) -> Result<&Constructor, RegistryError> {
         match &self.class(class_name)?.constructor {
             Some(c) => Ok(c),
-            None => Err(RegistryError::NoConstructor(class_name.to_owned()))
+            None => Err(RegistryError::NoConstructor(class_name.to_owned())),
         }
     }
 
@@ -594,11 +617,13 @@ impl Registry {
     ///
     /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
     /// ```
-    pub fn create_instance(&mut self,
-                           pwd: &str,
-                           cd: &str,
-                           class_name: &str,
-                           params: Vec<PolarValue>) -> Result<(), RegistryError> {
+    pub fn create_instance(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        class_name: &str,
+        params: Vec<PolarValue>,
+    ) -> Result<(), RegistryError> {
         let param_types = self.constructor(class_name)?.get_param_types();
         self.validate_params(&params, class_name, "<constructor>", param_types)?;
         self._create_instance(pwd, cd, class_name, params)
@@ -628,32 +653,38 @@ impl Registry {
     ///
     /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
     /// ```
-    pub fn parsed_create_instance(&mut self,
-                                  pwd: &str,
-                                  cd: &str,
-                                  class_name: &str,
-                                  args: &Vec<&str>) -> Result<(), RegistryError> {
+    pub fn parsed_create_instance(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        class_name: &str,
+        args: &Vec<&str>,
+    ) -> Result<(), RegistryError> {
         let param_types = self.constructor(class_name)?.get_param_types();
         let params = self.parse_params(class_name, "<constructor>", args, param_types)?;
         self._create_instance(pwd, cd, class_name, params)
     }
 
-    fn _create_instance(&mut self,
-                        pwd: &str,
-                        cd: &str,
-                        class_name: &str,
-                        params: Vec<PolarValue>) -> Result<(), RegistryError> {
+    fn _create_instance(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        class_name: &str,
+        params: Vec<PolarValue>,
+    ) -> Result<(), RegistryError> {
         let constructor = self.constructor(class_name)?;
-        let instance = constructor.invoke(params)
-            .map_err(|e| RegistryError::InvocationFailure {
-                pwd: pwd.to_owned(),
-                cd: cd.to_owned(),
-                class: class_name.to_owned(),
-                method: "<constructor>".to_owned(),
-                invocation_type: "constructor",
-                reason: "constructor invocation failure",
-                error: e,
-            })?;
+        let instance =
+            constructor
+                .invoke(params)
+                .map_err(|e| RegistryError::InvocationFailure {
+                    pwd: pwd.to_owned(),
+                    cd: cd.to_owned(),
+                    class: class_name.to_owned(),
+                    method: "<constructor>".to_owned(),
+                    invocation_type: "constructor",
+                    reason: "constructor invocation failure",
+                    error: e,
+                })?;
         self.create_path(pwd, cd, false, Some(instance), None, None, None)
     }
 
@@ -677,8 +708,7 @@ impl Registry {
     ///
     /// assert_eq!(registry.instance_value::<Foo>("/foo", ".").unwrap(), &Foo { id: 42 })
     /// ```
-    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str)
-                                      -> Result<&T, RegistryError> {
+    pub fn instance_value<T: 'static>(&self, pwd: &str, cd: &str) -> Result<&T, RegistryError> {
         let instance = self.instance(pwd, cd)?;
         match instance.downcast::<T>(Some(&self.host)) {
             Ok(value) => Ok(value),
@@ -688,7 +718,7 @@ impl Registry {
                 cast_type: "instance cast",
                 expected: e.expected,
                 got: e.got.unwrap_or("".to_owned()),
-            })
+            }),
         }
     }
 
@@ -698,7 +728,7 @@ impl Registry {
                 path: pwd.to_owned(),
                 expected: "instance",
             }),
-            Some(instance) => Ok(instance)
+            Some(instance) => Ok(instance),
         };
     }
 
@@ -731,8 +761,11 @@ impl Registry {
     ///
     /// assert_eq!(registry.attr_value::<i32>("/foo", "id").unwrap(), 42)
     /// ```
-    pub fn attr_value<T: 'static + FromPolar>(&self, pwd: &str, cd: &str)
-                                              -> Result<T, RegistryError> {
+    pub fn attr_value<T: 'static + FromPolar>(
+        &self,
+        pwd: &str,
+        cd: &str,
+    ) -> Result<T, RegistryError> {
         let result = self.attr(pwd, cd)?;
         Self::cast::<T>(pwd, cd, "attribute", result)
     }
@@ -765,10 +798,12 @@ impl Registry {
         // check that we are an attribute node
         let attr_name = match &attr_path.attr {
             Some(name) => name,
-            None => return Err(RegistryError::MissingAtPath {
-                path: attr_path.abs_path.to_owned(),
-                expected: "attribute",
-            })
+            None => {
+                return Err(RegistryError::MissingAtPath {
+                    path: attr_path.abs_path.to_owned(),
+                    expected: "attribute",
+                })
+            }
         };
         // lookup the instance node
         let instance_path = self.paths.get(&attr_path.owner.unwrap()).unwrap();
@@ -812,7 +847,7 @@ impl Registry {
     /// }
     ///
     /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
-    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    ///         .add_method("add", Foo::add_to_id, vec!["int"]).build();
     /// let mut registry = Registry::default();
     /// registry.cache_class(class).unwrap();
     ///
@@ -821,11 +856,12 @@ impl Registry {
     /// assert_eq!(registry.parsed_invoke_method_value::<i32>("/foo", "add", &vec!["15"]).unwrap(),
     ///            42 + 15)
     /// ```
-    pub fn parsed_invoke_method_value<T: 'static + FromPolar>(&mut self,
-                                                              pwd: &str,
-                                                              cd: &str,
-                                                              params: &Vec<&str>)
-                                                              -> Result<T, RegistryError> {
+    pub fn parsed_invoke_method_value<T: 'static + FromPolar>(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        params: &Vec<&str>,
+    ) -> Result<T, RegistryError> {
         let result = self.parsed_invoke_method(pwd, cd, params)?;
         Self::cast::<T>(pwd, cd, "method", result)
     }
@@ -849,7 +885,7 @@ impl Registry {
     /// }
     ///
     /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
-    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    ///         .add_method("add", Foo::add_to_id, vec!["int"]).build();
     /// let mut registry = Registry::default();
     /// registry.cache_class(class).unwrap();
     ///
@@ -858,16 +894,22 @@ impl Registry {
     /// assert_eq!(registry.parsed_invoke_method("/foo", "add", &vec!["15"]).unwrap(),
     ///            (42 + 15).to_polar())
     /// ```
-    pub fn parsed_invoke_method(&mut self, pwd: &str, cd: &str, params: &Vec<&str>)
-                                -> Result<PolarValue, RegistryError> {
+    pub fn parsed_invoke_method(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        params: &Vec<&str>,
+    ) -> Result<PolarValue, RegistryError> {
         // check that we are an method node
         let method_path = self.cd(pwd, cd)?;
         let method_name = match method_path.method {
             Some(name) => name,
-            None => return Err(RegistryError::MissingAtPath {
-                path: method_path.abs_path.to_owned(),
-                expected: "method",
-            })
+            None => {
+                return Err(RegistryError::MissingAtPath {
+                    path: method_path.abs_path.to_owned(),
+                    expected: "method",
+                })
+            }
         };
 
         // lookup the instance for the method and then the class
@@ -878,10 +920,21 @@ impl Registry {
 
         // parse the params into PolarValues and invoke method
         let params = self.parse_params(
-            &class.name, method_name, &params, instance_method.param_types())?;
-        self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
+            &class.name,
+            method_name,
+            &params,
+            instance_method.param_types(),
+        )?;
+        self._invoke_method(
+            pwd,
+            cd,
+            &class.fq_name,
+            method_name,
+            instance,
+            instance_method,
+            params,
+        )
     }
-
 
     /// Invokes the instance method stored at the specified path and casts the return value of the
     /// instance method to the specified type.
@@ -899,7 +952,7 @@ impl Registry {
     /// }
     ///
     /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
-    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    ///         .add_method("add", Foo::add_to_id, vec!["int"]).build();
     /// let mut registry = Registry::default();
     /// registry.cache_class(class).unwrap();
     ///
@@ -908,11 +961,12 @@ impl Registry {
     /// assert_eq!(registry.invoke_method_value::<i32>("/foo", "add", vec![15.to_polar()]).unwrap(),
     ///            42 + 15)
     /// ```
-    pub fn invoke_method_value<T: 'static + FromPolar>(&mut self,
-                                                       pwd: &str,
-                                                       cd: &str,
-                                                       params: Vec<PolarValue>)
-                                                       -> Result<T, RegistryError> {
+    pub fn invoke_method_value<T: 'static + FromPolar>(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        params: Vec<PolarValue>,
+    ) -> Result<T, RegistryError> {
         let result = self.invoke_method(pwd, cd, params)?;
         Self::cast::<T>(pwd, cd, "method", result)
     }
@@ -933,7 +987,7 @@ impl Registry {
     /// }
     ///
     /// let class = ClassBuilder::<Foo>::with_constructor(Foo::new, vec!["int"])
-    ///         .add_method("add_to_id", Foo::add_to_id, vec!["int"], Some("add")).build();
+    ///         .add_method("add", Foo::add_to_id, vec!["int"]).build();
     /// let mut registry = Registry::default();
     /// registry.cache_class(class).unwrap();
     ///
@@ -942,16 +996,22 @@ impl Registry {
     /// assert_eq!(registry.invoke_method("/foo", "add", vec![15.to_polar()]).unwrap(),
     ///            (42 + 15).to_polar())
     /// ```
-    pub fn invoke_method(&mut self, pwd: &str, cd: &str, params: Vec<PolarValue>)
-                         -> Result<PolarValue, RegistryError> {
+    pub fn invoke_method(
+        &mut self,
+        pwd: &str,
+        cd: &str,
+        params: Vec<PolarValue>,
+    ) -> Result<PolarValue, RegistryError> {
         // check that we are an method node
         let method_path = self.cd(pwd, cd)?;
         let method_name = match method_path.method {
             Some(name) => name,
-            None => return Err(RegistryError::MissingAtPath {
-                path: method_path.abs_path.to_owned(),
-                expected: "method",
-            })
+            None => {
+                return Err(RegistryError::MissingAtPath {
+                    path: method_path.abs_path.to_owned(),
+                    expected: "method",
+                })
+            }
         };
 
         // lookup the instance for the method and then the class
@@ -961,20 +1021,36 @@ impl Registry {
         let instance_method = class.instance_methods.get(method_name).unwrap();
 
         // validate params of the instance method
-        self.validate_params(&params, &class.fq_name, method_name, instance_method.param_types())?;
-        self._invoke_method(pwd, cd, &class.fq_name, method_name, instance, instance_method, params)
+        self.validate_params(
+            &params,
+            &class.fq_name,
+            method_name,
+            instance_method.param_types(),
+        )?;
+        self._invoke_method(
+            pwd,
+            cd,
+            &class.fq_name,
+            method_name,
+            instance,
+            instance_method,
+            params,
+        )
     }
 
-    fn _invoke_method(&self,
-                      pwd: &str,
-                      cd: &str,
-                      class_name: &str,
-                      method_name: &str,
-                      instance: &Instance,
-                      method: &InstanceMethod,
-                      params: Vec<PolarValue>) -> Result<PolarValue, RegistryError> {
-        method.invoke(instance, params, &self.host).map_err(|e| {
-            RegistryError::InvocationFailure {
+    fn _invoke_method(
+        &self,
+        pwd: &str,
+        cd: &str,
+        class_name: &str,
+        method_name: &str,
+        instance: &Instance,
+        method: &InstanceMethod,
+        params: Vec<PolarValue>,
+    ) -> Result<PolarValue, RegistryError> {
+        method
+            .invoke(instance, params, &self.host)
+            .map_err(|e| RegistryError::InvocationFailure {
                 pwd: pwd.to_owned(),
                 cd: cd.to_owned(),
                 class: class_name.to_owned(),
@@ -982,8 +1058,7 @@ impl Registry {
                 invocation_type: "method",
                 reason: "method invocation failure",
                 error: e,
-            }
-        })
+            })
     }
 }
 
@@ -996,10 +1071,7 @@ pub enum RegistryError {
         expected: &'static str,
     },
     #[error("cannot create child node at {pwd}/{child}")]
-    InvalidPathChildName {
-        pwd: String,
-        child: String,
-    },
+    InvalidPathChildName { pwd: String, child: String },
     #[error("cannot navigate to path: pwd={pwd}, cd={cd}, reason={reason}")]
     IllegalPathNavigation {
         pwd: String,
@@ -1009,10 +1081,7 @@ pub enum RegistryError {
     #[error("duplicate path: {0}")]
     DuplicatePath(String),
     #[error("methods or attributes of class share the same name: class={class}, child={child}")]
-    ClassChildNameConflict {
-        class: String,
-        child: String,
-    },
+    ClassChildNameConflict { class: String, child: String },
     #[error("class has already been registered: {0}")]
     DuplicateClass(String),
     #[error("cannot make instance from class that is not registered: {0}")]
@@ -1057,43 +1126,132 @@ pub enum RegistryError {
 impl PartialEq for RegistryError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (RegistryError::MissingAtPath { path, expected },
-                RegistryError::MissingAtPath { path: path2, expected: expected2 }) =>
-                path == path2 && expected == expected2,
-            (RegistryError::InvalidPathChildName { pwd, child },
-                RegistryError::InvalidPathChildName { pwd: pwd2, child: child2 }) =>
-                pwd == pwd2 && child == child2,
-            (RegistryError::IllegalPathNavigation { pwd, cd, .. },
-                RegistryError::IllegalPathNavigation { pwd: pwd2, cd: cd2, .. }) =>
-                pwd == pwd2 && cd == cd2,
-            (RegistryError::DuplicatePath(path),
-                RegistryError::DuplicatePath(path2)) =>
-                path == path2,
-            (RegistryError::DuplicateClass(class),
-                RegistryError::DuplicateClass(class2)) =>
-                class == class2,
-            (RegistryError::ClassChildNameConflict { class, child },
-                RegistryError::ClassChildNameConflict { class: class2, child: child2 }) =>
-                class == class2 && child == child2,
-            (RegistryError::UnknownClass(class),
-                RegistryError::UnknownClass(class2)) =>
-                class == class2,
-            (RegistryError::NoConstructor(class),
-                RegistryError::NoConstructor(class2)) =>
-                class == class2,
-            (RegistryError::InvalidNumberOfMethodParameters { class, method, expected, received },
-                RegistryError::InvalidNumberOfMethodParameters { class: class2, method: method2, expected: expected2, received: received2 }) =>
-                class == class2 && method == method2 && expected == expected2 && received == received2,
-            (RegistryError::InvalidMethodParameter { class, method, param_index, param_type, .. },
-                RegistryError::InvalidMethodParameter { class: class2, method: method2, param_index: param_index2, param_type: param_type2, .. }) =>
-                class == class2 && method == method2 && param_index == param_index2 && param_type == param_type2,
-            (RegistryError::InvalidCast { pwd, cd, cast_type, expected, got },
-                RegistryError::InvalidCast { pwd: pwd2, cd: cd2, cast_type: cast_type2, expected: expected2, got: got2 }) =>
-                pwd == pwd2 && cd == cd2 && cast_type == cast_type2 && expected == expected2 && got == got2,
-            (RegistryError::InvocationFailure { pwd, cd, class, method, invocation_type, .. },
-                RegistryError::InvocationFailure { pwd: pwd2, cd: cd2, class: class2, method: method2, invocation_type: invocation_type2, .. }) =>
-                pwd == pwd2 && cd == cd2 && class == class2 && method == method2 && invocation_type == invocation_type2,
-            _ => false
+            (
+                RegistryError::MissingAtPath { path, expected },
+                RegistryError::MissingAtPath {
+                    path: path2,
+                    expected: expected2,
+                },
+            ) => path == path2 && expected == expected2,
+            (
+                RegistryError::InvalidPathChildName { pwd, child },
+                RegistryError::InvalidPathChildName {
+                    pwd: pwd2,
+                    child: child2,
+                },
+            ) => pwd == pwd2 && child == child2,
+            (
+                RegistryError::IllegalPathNavigation { pwd, cd, .. },
+                RegistryError::IllegalPathNavigation {
+                    pwd: pwd2, cd: cd2, ..
+                },
+            ) => pwd == pwd2 && cd == cd2,
+            (RegistryError::DuplicatePath(path), RegistryError::DuplicatePath(path2)) => {
+                path == path2
+            }
+            (RegistryError::DuplicateClass(class), RegistryError::DuplicateClass(class2)) => {
+                class == class2
+            }
+            (
+                RegistryError::ClassChildNameConflict { class, child },
+                RegistryError::ClassChildNameConflict {
+                    class: class2,
+                    child: child2,
+                },
+            ) => class == class2 && child == child2,
+            (RegistryError::UnknownClass(class), RegistryError::UnknownClass(class2)) => {
+                class == class2
+            }
+            (RegistryError::NoConstructor(class), RegistryError::NoConstructor(class2)) => {
+                class == class2
+            }
+            (
+                RegistryError::InvalidNumberOfMethodParameters {
+                    class,
+                    method,
+                    expected,
+                    received,
+                },
+                RegistryError::InvalidNumberOfMethodParameters {
+                    class: class2,
+                    method: method2,
+                    expected: expected2,
+                    received: received2,
+                },
+            ) => {
+                class == class2
+                    && method == method2
+                    && expected == expected2
+                    && received == received2
+            }
+            (
+                RegistryError::InvalidMethodParameter {
+                    class,
+                    method,
+                    param_index,
+                    param_type,
+                    ..
+                },
+                RegistryError::InvalidMethodParameter {
+                    class: class2,
+                    method: method2,
+                    param_index: param_index2,
+                    param_type: param_type2,
+                    ..
+                },
+            ) => {
+                class == class2
+                    && method == method2
+                    && param_index == param_index2
+                    && param_type == param_type2
+            }
+            (
+                RegistryError::InvalidCast {
+                    pwd,
+                    cd,
+                    cast_type,
+                    expected,
+                    got,
+                },
+                RegistryError::InvalidCast {
+                    pwd: pwd2,
+                    cd: cd2,
+                    cast_type: cast_type2,
+                    expected: expected2,
+                    got: got2,
+                },
+            ) => {
+                pwd == pwd2
+                    && cd == cd2
+                    && cast_type == cast_type2
+                    && expected == expected2
+                    && got == got2
+            }
+            (
+                RegistryError::InvocationFailure {
+                    pwd,
+                    cd,
+                    class,
+                    method,
+                    invocation_type,
+                    ..
+                },
+                RegistryError::InvocationFailure {
+                    pwd: pwd2,
+                    cd: cd2,
+                    class: class2,
+                    method: method2,
+                    invocation_type: invocation_type2,
+                    ..
+                },
+            ) => {
+                pwd == pwd2
+                    && cd == cd2
+                    && class == class2
+                    && method == method2
+                    && invocation_type == invocation_type2
+            }
+            _ => false,
         }
     }
 
@@ -1104,9 +1262,9 @@ impl PartialEq for RegistryError {
 
 #[cfg(test)]
 mod path_tests {
-    use std::collections::HashMap;
-    use crate::command::registry::RegistryError;
     use super::Registry;
+    use crate::command::registry::RegistryError;
+    use std::collections::HashMap;
 
     #[test]
     fn mkdir_absolute_directory() {
@@ -1253,11 +1411,14 @@ mod path_tests {
 
         let result = registry.cd("/foo/bar/soo", "../../../..").err().unwrap();
 
-        assert_eq!(RegistryError::IllegalPathNavigation {
-            pwd: "/foo/bar/soo".to_owned(),
-            cd: "../../../..".to_owned(),
-            reason: "",
-        }, result);
+        assert_eq!(
+            RegistryError::IllegalPathNavigation {
+                pwd: "/foo/bar/soo".to_owned(),
+                cd: "../../../..".to_owned(),
+                reason: "",
+            },
+            result
+        );
     }
 
     #[test]
@@ -1267,22 +1428,24 @@ mod path_tests {
 
         let result = registry.cd("/foo/bar/soo", "doo").err().unwrap();
 
-        assert_eq!(RegistryError::IllegalPathNavigation {
-            pwd: "/foo/bar/soo".to_owned(),
-            cd: "doo".to_owned(),
-            reason: "",
-        }, result);
+        assert_eq!(
+            RegistryError::IllegalPathNavigation {
+                pwd: "/foo/bar/soo".to_owned(),
+                cd: "doo".to_owned(),
+                reason: "",
+            },
+            result
+        );
     }
 }
 
 #[cfg(test)]
 mod registry_tests {
-    use crate::command::oso::{PolarClass, PolarValue};
-    use crate::command::registry::{RegistryError, Registry};
+    use crate::command::oso::{Class, ClassBuilder, PolarClass, PolarValue};
+    use crate::command::registry::{Registry, RegistryError};
 
-    #[derive(Clone, PolarClass, Default)]
+    #[derive(Clone, Default)]
     struct User {
-        #[polar(attribute)]
         pub username: String,
     }
 
@@ -1292,10 +1455,9 @@ mod registry_tests {
         }
     }
 
-    #[derive(Clone, PolarClass, Default)]
+    #[derive(Clone, Default)]
     struct User2 {
         pub username: String,
-        #[polar(attribute)]
         pub user_id: i32,
     }
 
@@ -1311,13 +1473,19 @@ mod registry_tests {
 
     fn create_registry() -> Registry {
         let mut registry = Registry::default();
-        registry.cache_class(User::get_polar_class_builder()
-            .set_constructor(User::new, vec!["string"])
-            .build()).unwrap();
-        registry.cache_class(User2::get_polar_class_builder()
-            .set_constructor(User2::new, vec!["string", "int"])
-            .add_method("add_one", User2::add_one, vec!["int"], None)
-            .build()).unwrap();
+        registry
+            .cache_class(
+                ClassBuilder::with_constructor(User::new, vec!["string"]).build(),
+            )
+            .unwrap();
+        registry
+            .cache_class(
+                ClassBuilder::with_constructor(User2::new, vec!["string", "int"])
+                    .add_method("add_one", User2::add_one, vec!["int"])
+                    .add_attribute_getter("user_id", |user| -> i32 { user.user_id })
+                    .build(),
+            )
+            .unwrap();
         registry
     }
 
@@ -1325,7 +1493,14 @@ mod registry_tests {
     fn make_instance_1_param() {
         let mut registry = create_registry();
 
-        registry.create_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+        registry
+            .create_instance(
+                "/foo",
+                ".",
+                "User",
+                vec![PolarValue::String("jim".to_owned())],
+            )
+            .unwrap();
 
         let user = registry.instance_value::<User>("/", "foo").unwrap();
         assert_eq!(user.username, "jim");
@@ -1335,7 +1510,17 @@ mod registry_tests {
     fn make_instance_2_params() {
         let mut registry = create_registry();
 
-        registry.create_instance("/foo", ".", "User2", vec![PolarValue::String("jim".to_owned()), PolarValue::Integer(42)]).unwrap();
+        registry
+            .create_instance(
+                "/foo",
+                ".",
+                "User2",
+                vec![
+                    PolarValue::String("jim".to_owned()),
+                    PolarValue::Integer(42),
+                ],
+            )
+            .unwrap();
 
         let user = registry.instance_value::<User2>("/foo", ".").unwrap();
         assert_eq!(user.username, "jim");
@@ -1346,7 +1531,9 @@ mod registry_tests {
     fn make_instance_1_param_strings() {
         let mut registry = create_registry();
 
-        registry.parsed_create_instance("/foo", ".", "User", &vec!["jim"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User", &vec!["jim"])
+            .unwrap();
 
         let user = registry.instance_value::<User>("/foo", ".").unwrap();
         assert_eq!(user.username, "jim");
@@ -1356,7 +1543,9 @@ mod registry_tests {
     fn make_instance_2_params_strings() {
         let mut registry = create_registry();
 
-        registry.parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"])
+            .unwrap();
 
         let user = registry.instance_value::<User2>("/", "foo").unwrap();
         assert_eq!(user.username, "jim");
@@ -1368,19 +1557,40 @@ mod registry_tests {
         let mut registry = create_registry();
         registry.mkdir("/foo", ".").unwrap();
 
-        registry.create_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+        registry
+            .create_instance(
+                "/foo",
+                ".",
+                "User",
+                vec![PolarValue::String("jim".to_owned())],
+            )
+            .unwrap();
 
         let user = registry.instance_value::<User>("/foo", ".").unwrap();
         assert_eq!(user.username, "jim");
     }
 
-
     #[test]
     fn make_instance_at_same_directory_is_error() {
         let mut registry = create_registry();
-        registry.create_instance("/foo", ".", "User", vec![PolarValue::String("jim".to_owned())]).unwrap();
+        registry
+            .create_instance(
+                "/foo",
+                ".",
+                "User",
+                vec![PolarValue::String("jim".to_owned())],
+            )
+            .unwrap();
 
-        let result = registry.create_instance("/foo", ".", "User", vec![PolarValue::String("greco".to_owned())]).err().unwrap();
+        let result = registry
+            .create_instance(
+                "/foo",
+                ".",
+                "User",
+                vec![PolarValue::String("greco".to_owned())],
+            )
+            .err()
+            .unwrap();
 
         assert_eq!(RegistryError::DuplicatePath("/foo".to_owned()), result);
         let user = registry.instance_value::<User>("/foo", ".").unwrap();
@@ -1390,7 +1600,9 @@ mod registry_tests {
     #[test]
     fn get_attribute() {
         let mut registry = create_registry();
-        registry.parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"])
+            .unwrap();
 
         let result: i32 = registry.attr_value("/foo", "user_id").unwrap();
 
@@ -1400,40 +1612,55 @@ mod registry_tests {
     #[test]
     fn get_attribute_wrong_path_is_error() {
         let mut registry = create_registry();
-        registry.parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"])
+            .unwrap();
 
         let result = registry.attr_value::<i32>("/foo", ".").err().unwrap();
 
-        assert_eq!(RegistryError::MissingAtPath {
-            path: "/foo".to_owned(),
-            expected: "attribute",
-        }, result);
+        assert_eq!(
+            RegistryError::MissingAtPath {
+                path: "/foo".to_owned(),
+                expected: "attribute",
+            },
+            result
+        );
     }
 
     #[test]
     fn get_attribute_wrong_type_is_error() {
         let mut registry = create_registry();
-        registry.parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "42"])
+            .unwrap();
 
-        let result = registry.attr_value::<f64>("/foo/user_id", ".").err().unwrap();
+        let result = registry
+            .attr_value::<f64>("/foo/user_id", ".")
+            .err()
+            .unwrap();
 
-        assert_eq!(RegistryError::InvalidCast {
-            pwd: "/foo/user_id".to_owned(),
-            cd: ".".to_owned(),
-            cast_type: "attribute",
-            expected: "float".to_owned(),
-            got: "".to_string(),
-        }, result);
+        assert_eq!(
+            RegistryError::InvalidCast {
+                pwd: "/foo/user_id".to_owned(),
+                cd: ".".to_owned(),
+                cast_type: "attribute",
+                expected: "float".to_owned(),
+                got: "".to_string(),
+            },
+            result
+        );
     }
 
     #[test]
     fn call_instance_method() {
         let mut registry = create_registry();
-        registry.parsed_create_instance(
-            "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "10"])
+            .unwrap();
 
-        let result = registry.invoke_method(
-            "/foo", "add_one", vec![PolarValue::Integer(42)]).unwrap();
+        let result = registry
+            .invoke_method("/foo", "add_one", vec![PolarValue::Integer(42)])
+            .unwrap();
 
         assert_eq!(PolarValue::Integer(43), result);
     }
@@ -1441,29 +1668,37 @@ mod registry_tests {
     #[test]
     fn call_instance_method_with_wrong_param_type_is_error() {
         let mut registry = create_registry();
-        registry.parsed_create_instance(
-            "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "10"])
+            .unwrap();
 
-        let result = registry.invoke_method(
-            "/foo", "add_one", vec![PolarValue::Float(42.0)]).err().unwrap();
+        let result = registry
+            .invoke_method("/foo", "add_one", vec![PolarValue::Float(42.0)])
+            .err()
+            .unwrap();
 
-        assert_eq!(RegistryError::InvalidMethodParameter {
-            class: "rcore::command::registry::registry_tests::User2".to_string(),
-            method: "add_one".to_string(),
-            param_index: 0,
-            param_type: "int",
-            reason: "",
-        }, result);
+        assert_eq!(
+            RegistryError::InvalidMethodParameter {
+                class: "rcore::command::registry::registry_tests::User2".to_string(),
+                method: "add_one".to_string(),
+                param_index: 0,
+                param_type: "int",
+                reason: "",
+            },
+            result
+        );
     }
 
     #[test]
     fn call_instance_method_value() {
         let mut registry = create_registry();
-        registry.parsed_create_instance(
-            "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "10"])
+            .unwrap();
 
-        let result: i32 = registry.invoke_method_value(
-            "/foo", "add_one", vec![PolarValue::Integer(42)]).unwrap();
+        let result: i32 = registry
+            .invoke_method_value("/foo", "add_one", vec![PolarValue::Integer(42)])
+            .unwrap();
 
         assert_eq!(43, result);
     }
@@ -1471,11 +1706,13 @@ mod registry_tests {
     #[test]
     fn parse_and_call_instance_method() {
         let mut registry = create_registry();
-        registry.parsed_create_instance(
-            "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "10"])
+            .unwrap();
 
-        let result = registry.parsed_invoke_method(
-            "/foo/add_one", ".", &vec!["42"]).unwrap();
+        let result = registry
+            .parsed_invoke_method("/foo/add_one", ".", &vec!["42"])
+            .unwrap();
 
         assert_eq!(PolarValue::Integer(43), result);
     }
@@ -1483,19 +1720,32 @@ mod registry_tests {
     #[test]
     fn parse_and_call_instance_method_value() {
         let mut registry = create_registry();
-        registry.parsed_create_instance(
-            "/foo", ".", "User2", &vec!["jim", "10"]).unwrap();
+        registry
+            .parsed_create_instance("/foo", ".", "User2", &vec!["jim", "10"])
+            .unwrap();
 
-        let result: i32 = registry.parsed_invoke_method_value(
-            "/foo/add_one", ".", &vec!["42"]).unwrap();
+        let result: i32 = registry
+            .parsed_invoke_method_value("/foo/add_one", ".", &vec!["42"])
+            .unwrap();
 
         assert_eq!(43, result);
     }
 
-    #[derive(PolarClass, Clone, Default, PartialEq, Debug)]
+    #[derive(Clone, Default, PartialEq, Debug)]
     struct Bar {}
 
-    #[derive(PolarClass, Clone, Default)]
+    impl PolarClass for Bar {
+        fn get_polar_class() -> Class {
+            Self::get_polar_class_builder().build()
+        }
+
+        fn get_polar_class_builder() -> ClassBuilder<Self> {
+            ClassBuilder::with_constructor(Bar::default, vec![])
+                .set_constructor(Bar::default, vec![])
+        }
+    }
+
+    #[derive(Clone, Default)]
     struct Foo {}
 
     impl Foo {
@@ -1518,23 +1768,26 @@ mod registry_tests {
 
     fn create_registry2() -> Registry {
         let mut registry = Registry::default();
-        let bar_class = Bar::get_polar_class_builder()
-            .set_constructor(Bar::default, vec![])
-            .build();
+        let bar_class = Bar::get_polar_class();
         // let x: fn(&Foo, i16, i32) -> i16 = Foo::add;
-        let foo_class = Foo::get_polar_class_builder()
-            .set_constructor(Foo::new, vec![])
-            .add_method("add", Foo::add,
-                        vec!["int", "int"], Some("add_two"))
-            .add_method("bar", Foo::bar, vec![], None)
-            .add_method("doit", |f: &Foo| -> bool {
-                f.doit();
-                true
-            }, vec![], None)
+        let foo_class =
+            ClassBuilder::with_constructor(Foo::new, vec![])
+            .add_method("add", Foo::add, vec!["int", "int"])
+            .add_method("bar", Foo::bar, vec![])
+            .add_method(
+                "doit",
+                |f: &Foo| -> bool {
+                    f.doit();
+                    true
+                },
+                vec![],
+            )
             .build();
         registry.cache_class(bar_class).unwrap();
         registry.cache_class(foo_class).unwrap();
-        registry.create_instance("/foo/bar", ".", "Foo", vec![]).unwrap();
+        registry
+            .create_instance("/foo/bar", ".", "Foo", vec![])
+            .unwrap();
         registry
     }
 
@@ -1542,8 +1795,9 @@ mod registry_tests {
     fn call_instance_method_two_params() {
         let mut registry = create_registry2();
 
-        let result: i32 = registry.parsed_invoke_method_value(
-            "/foo/bar", "add_two", &vec!["1", "2"]).unwrap();
+        let result: i32 = registry
+            .parsed_invoke_method_value("/foo/bar", "add", &vec!["1", "2"])
+            .unwrap();
 
         assert_eq!(3, result);
     }
@@ -1552,8 +1806,9 @@ mod registry_tests {
     fn call_instance_method_with_instance_returned_object() {
         let mut registry = create_registry2();
 
-        let result: Bar = registry.parsed_invoke_method_value(
-            "/foo/bar", "bar", &vec![]).unwrap();
+        let result: Bar = registry
+            .parsed_invoke_method_value("/foo/bar", "bar", &vec![])
+            .unwrap();
 
         assert_eq!(Bar {}, result);
     }
@@ -1562,8 +1817,9 @@ mod registry_tests {
     fn call_instance_method_with_no_return_value() {
         let mut registry = create_registry2();
 
-        let result: bool = registry.parsed_invoke_method_value(
-            "/foo/bar", "doit", &vec![]).unwrap();
+        let result: bool = registry
+            .parsed_invoke_method_value("/foo/bar", "doit", &vec![])
+            .unwrap();
 
         assert!(result);
     }

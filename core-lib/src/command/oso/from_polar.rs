@@ -301,7 +301,7 @@ impl FromPolar for Instance {
             PolarValue::List(v) => Instance::new(v),
             PolarValue::String(s) => Instance::new(s),
             PolarValue::Map(d) => Instance::new(d),
-            PolarValue::Instance(instance) => instance
+            PolarValue::Instance(instance) => instance,
         };
         Ok(instance)
     }
